@@ -164,8 +164,18 @@ set noteTitle to my decode64("]] .. title64 .. [[")
 set noteBody to my decode64("]] .. body64 .. [[")
 
 tell application "Notes"
-    set targetAccount to first account whose name is accountName
-    set targetFolder to first folder of targetAccount whose name is folderName
+    try
+        set targetAccount to first account whose name is accountName
+    on error
+        set targetAccount to default account
+    end try
+
+    try
+        set targetFolder to first folder of targetAccount whose name is folderName
+    on error
+        set targetFolder to make new folder at targetAccount with properties {name:folderName}
+    end try
+
     set matchingNotes to every note of targetFolder whose name is noteTitle
 
     if operationName is "read" then
