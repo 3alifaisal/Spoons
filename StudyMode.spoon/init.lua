@@ -362,9 +362,9 @@ end
 --- StudyMode:toggle()
 function obj:toggle()
   if mode == "ALARM" then
-    startStudyPhase()
+    self:startStudyPhase()
   elseif mode == "INACTIVE" then
-    startStudyPhase()
+    self:startStudyPhase()
   else
     hs.alert.show(string.format("%s active: %s left", mode, formatRemaining(remainingSeconds())))
   end
