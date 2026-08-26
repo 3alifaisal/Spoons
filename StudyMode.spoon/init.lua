@@ -1,7 +1,8 @@
 --- === StudyMode ===
 ---
 --- Focus mode Spoon for Hammerspoon.
---- Displays a persistent floating top-right timer and blocks distracting sites (YouTube, Chess, Gemini AI).
+--- Cycles between a 45-minute Study phase (blocking sites) and a 15-minute Break phase (unblocking sites).
+--- When the break ends, it continuously rings the 'Crystals' sound until clicked or triggered to start a new cycle.
 ---
 
 local obj = {}
@@ -9,28 +10,33 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "1.2"
+obj.version = "2.0"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
 
 -- Configuration
-obj.duration = 45 * 60 -- 45 minutes default
+obj.studyDuration = 45 * 60 -- 45 minutes study
+obj.breakDuration = 15 * 60 -- 15 minutes break
 obj.helperPath = "/Library/HammerspoonStudyMode/study-mode-hosts"
-obj.settingsKey = "hammerspoon.studyMode.deadline"
-obj.overlayWidth = 138
+obj.settingsKeyDeadline = "hammerspoon.studyMode.deadline"
+obj.settingsKeyMode = "hammerspoon.studyMode.mode"
+obj.overlayWidth = 144
 obj.overlayHeight = 36
 obj.screenMargin = 12
+obj.soundFile = "/System/Library/PrivateFrameworks/ToneLibrary.framework/Versions/A/Resources/Ringtones/Crystals.m4r"
 obj.defaultHotkey = { { "cmd", "alt", "ctrl" }, "S" }
 
 -- Internal state
-local active = false
+local mode = "INACTIVE" -- "STUDY", "BREAK", "ALARM", "INACTIVE"
 local deadline = nil
 local ticker = nil
+local alarmTimer = nil
 local overlay = nil
 local keyTapWatcher = nil
 local screenWatcher = nil
 local lastHotkeyTime = 0
+local alarmSound = nil
 
 local BLOCKED_HOSTS_BLOCK = [[
 # BEGIN HAMMERSPOON STUDY MODE
@@ -49,20 +55,18 @@ local function formatRemaining(totalSeconds)
 end
 
 local function remainingSeconds()
-  if not active or not deadline then return 0 end
+  if not deadline then return 0 end
   return math.max(0, deadline - hs.timer.secondsSinceEpoch())
 end
 
 -- Execute hosts edit via helper or direct fallback
 local function applyHostsBlock(enable)
-  -- 1. Try helper script if present and executable
   if hs.fs.attributes(obj.helperPath) then
     local cmd = enable and "on" or "off"
     local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
     if rc == 0 then return true end
   end
 
-  -- 2. Direct /etc/hosts modification fallback
   local shScript
   if enable then
     shScript = string.format([[
@@ -84,10 +88,32 @@ local function applyHostsBlock(enable)
   local output, status, type, rc = hs.execute(string.format('sudo -n /bin/sh -c "%s"', escapedSh))
   if rc == 0 then return true end
 
-  -- 3. Fallback to AppleScript with password prompt if sudo -n is not configured yet
   local appleScript = string.format([[do shell script %s with administrator privileges]], hs.inspect(shScript))
   local ok, res = hs.osascript.applescript(appleScript)
   return ok
+end
+
+local function stopAlarmSound()
+  if alarmTimer then
+    alarmTimer:stop()
+    alarmTimer = nil
+  end
+  if alarmSound then
+    pcall(function() alarmSound:stop() end)
+    alarmSound = nil
+  end
+end
+
+local function playCrystalsRing()
+  if not alarmSound then
+    alarmSound = hs.sound.getByFile(obj.soundFile) or hs.sound.getByName("Crystals") or hs.sound.getByName("Glass")
+  end
+  if alarmSound then
+    pcall(function()
+      alarmSound:stop()
+      alarmSound:play()
+    end)
+  end
 end
 
 local function positionOverlay()
@@ -109,7 +135,7 @@ local function ensureOverlay()
 
   overlay = hs.canvas.new({ x = 0, y = 0, w = obj.overlayWidth, h = obj.overlayHeight })
   overlay:appendElements(
-    -- Outer background pill
+    -- 1. Outer background pill
     {
       type = "rectangle",
       action = "strokeAndFill",
@@ -118,7 +144,7 @@ local function ensureOverlay()
       strokeWidth = 1.4,
       roundedRectRadii = { xRadius = 18, yRadius = 18 },
     },
-    -- Pulse dot indicator
+    -- 2. Dot indicator
     {
       type = "circle",
       action = "fill",
@@ -126,16 +152,16 @@ local function ensureOverlay()
       center = { x = 18, y = 18 },
       radius = 4,
     },
-    -- Label "STUDY"
+    -- 3. Label ("STUDY" / "BREAK" / "🔔 CLICK")
     {
       type = "text",
       text = "STUDY",
       textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
       textSize = 11,
       textFont = ".SFNS-Medium",
-      frame = { x = 28, y = 10, w = 48, h = 18 },
+      frame = { x = 28, y = 10, w = 50, h = 18 },
     },
-    -- Countdown text "45:00"
+    -- 4. Timer text ("45:00")
     {
       type = "text",
       text = "45:00",
@@ -143,13 +169,25 @@ local function ensureOverlay()
       textColor = { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 },
       textSize = 14,
       textFont = ".SFNS-Bold",
-      frame = { x = 68, y = 9, w = 56, h = 18 },
+      frame = { x = 70, y = 9, w = 60, h = 18 },
     }
   )
 
-  -- Topmost window level floating over all websites and spaces
   overlay:level(hs.canvas.windowLevels.screenSaver)
   overlay:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
+  overlay:canvasMouseEvents({ mouseDown = true })
+  overlay:mouseCallback(function(canvas, event, id, x, y)
+    if event == "mouseDown" then
+      if mode == "ALARM" then
+        obj:startStudyPhase()
+      elseif mode == "BREAK" then
+        hs.alert.show("Break active (" .. formatRemaining(remainingSeconds()) .. " left)")
+      elseif mode == "STUDY" then
+        hs.alert.show("Study active (" .. formatRemaining(remainingSeconds()) .. " left)")
+      end
+    end
+  end)
+
   positionOverlay()
   overlay:show(0.15)
 end
@@ -168,60 +206,97 @@ local function stopTicker()
   end
 end
 
-local function finishStudyMode(showCompletionNotification)
-  if not active then return end
+local function updateOverlayUI()
+  ensureOverlay()
+  if not overlay then return end
 
-  active = false
+  if mode == "STUDY" then
+    overlay:elementAttribute(1, "strokeColor", { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 })
+    overlay:elementAttribute(2, "fillColor", { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "STUDY")
+    overlay:elementAttribute(3, "textColor", { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
+
+  elseif mode == "BREAK" then
+    overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 })
+    overlay:elementAttribute(2, "fillColor", { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "BREAK")
+    overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
+
+  elseif mode == "ALARM" then
+    overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
+    overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "🔔 START")
+    overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", "STUDY")
+  end
+end
+
+local function saveState()
+  hs.settings.set(obj.settingsKeyMode, mode)
+  hs.settings.set(obj.settingsKeyDeadline, deadline)
+end
+
+-- Forward declaration
+local updateLoop
+
+--- StudyMode:startAlarmPhase()
+--- Called when Break ends. Rings Crystals sound continuously until clicked/triggered.
+function obj:startAlarmPhase()
+  mode = "ALARM"
   deadline = nil
   stopTicker()
-  hideOverlay()
+  saveState()
 
-  hs.settings.set(obj.settingsKey, nil)
+  updateOverlayUI()
+  playCrystalsRing()
+
+  -- Ring every 2.5 seconds until clicked or hotkey pressed
+  stopAlarmSound()
+  alarmTimer = hs.timer.doEvery(2.5, function()
+    if mode == "ALARM" then
+      playCrystalsRing()
+    else
+      stopAlarmSound()
+    end
+  end)
+
+  hs.notify.new({
+    title = "Break is over! 🔔",
+    informativeText = "Click the top-right timer or press fn+S to start your next 45-minute study session.",
+    soundName = "Crystals",
+  }):send()
+end
+
+--- StudyMode:startBreakPhase()
+--- Starts 15-minute Break phase: unblocks websites & counts down.
+function obj:startBreakPhase()
+  mode = "BREAK"
+  deadline = hs.timer.secondsSinceEpoch() + obj.breakDuration
+  stopAlarmSound()
+  saveState()
+
   applyHostsBlock(false)
-
-  if showCompletionNotification then
-    hs.notify.new({
-      title = "Study Mode complete! 🎉",
-      informativeText = string.format("%d minutes finished. YouTube, Chess, & Gemini are unblocked.", math.floor(obj.duration / 60)),
-      soundName = "Glass",
-    }):send()
-  else
-    hs.alert.show("Study Mode ended")
-  end
-end
-
-local function updateOverlay()
-  if not active or not deadline then return end
-
-  local seconds = remainingSeconds()
   ensureOverlay()
-  if overlay then
-    overlay:elementAttribute(4, "text", formatRemaining(seconds))
-  end
-
-  if seconds <= 0 then
-    finishStudyMode(true)
-  end
-end
-
-local function activateUntil(untilTime)
-  active = true
-  deadline = untilTime
-  hs.settings.set(obj.settingsKey, deadline)
+  updateOverlayUI()
 
   stopTicker()
-  ensureOverlay()
-  ticker = hs.timer.doEvery(1, updateOverlay)
-  updateOverlay()
+  ticker = hs.timer.doEvery(1, updateLoop)
+
+  hs.notify.new({
+    title = "45-Minute Study Session Complete! ☕",
+    informativeText = "15-minute break started. YouTube, Chess, & Gemini are available.",
+    soundName = "Glass",
+  }):send()
+
+  hs.alert.show("15-Minute Break started ☕\nSites unblocked.", 3)
 end
 
---- StudyMode:start()
---- Starts a new Study Mode focus session.
-function obj:start()
-  if active then
-    hs.alert.show("Study Mode active: " .. formatRemaining(remainingSeconds()) .. " remaining")
-    return
-  end
+--- StudyMode:startStudyPhase()
+--- Starts 45-minute Study phase: blocks websites & counts down.
+function obj:startStudyPhase()
+  stopAlarmSound()
 
   local ok = applyHostsBlock(true)
   if not ok then
@@ -229,41 +304,84 @@ function obj:start()
     return
   end
 
-  activateUntil(hs.timer.secondsSinceEpoch() + obj.duration)
+  mode = "STUDY"
+  deadline = hs.timer.secondsSinceEpoch() + obj.studyDuration
+  saveState()
+
+  ensureOverlay()
+  updateOverlayUI()
+
+  stopTicker()
+  ticker = hs.timer.doEvery(1, updateLoop)
+
   hs.alert.show(
-    string.format("Study Mode active (%d:00)\nYouTube, Chess, & Gemini blocked.", math.floor(obj.duration / 60)),
+    string.format("Study Session active (%d:00)\nYouTube, Chess, & Gemini blocked.", math.floor(obj.studyDuration / 60)),
     3
   )
 end
 
+updateLoop = function()
+  if mode == "STUDY" or mode == "BREAK" then
+    local seconds = remainingSeconds()
+    updateOverlayUI()
+
+    if seconds <= 0 then
+      if mode == "STUDY" then
+        obj:startBreakPhase()
+      elseif mode == "BREAK" then
+        obj:startAlarmPhase()
+      end
+    end
+  end
+end
+
+--- StudyMode:start()
+--- Main entrypoint to start Study Mode.
+function obj:start()
+  if mode == "ALARM" then
+    self:startStudyPhase()
+  elseif mode == "STUDY" then
+    hs.alert.show("Study Session active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+  elseif mode == "BREAK" then
+    hs.alert.show("Break active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+  else
+    self:startStudyPhase()
+  end
+end
+
 --- StudyMode:stop()
---- Manually stops an active Study Mode session.
+--- Emergency stop to cancel Study Mode and remove site blocks.
 function obj:stop()
-  if not active then
+  if mode == "INACTIVE" then
     hs.alert.show("Study Mode is not active")
     return
   end
-  finishStudyMode(false)
+
+  mode = "INACTIVE"
+  deadline = nil
+  stopTicker()
+  stopAlarmSound()
+  hideOverlay()
+
+  hs.settings.set(obj.settingsKeyMode, nil)
+  hs.settings.set(obj.settingsKeyDeadline, nil)
+  applyHostsBlock(false)
+
+  hs.alert.show("Study Mode stopped")
 end
 
 --- StudyMode:toggle()
---- Starts Study Mode if inactive, or shows remaining time if active.
 function obj:toggle()
-  if active then
-    hs.alert.show("Study Mode active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+  if mode == "ALARM" then
+    self:startStudyPhase()
+  elseif mode == "INACTIVE" then
+    self:startStudyPhase()
   else
-    self:start()
+    hs.alert.show(string.format("%s active: %s left", mode, formatRemaining(remainingSeconds())))
   end
 end
 
---- StudyMode:remaining()
---- Returns remaining seconds in current session.
-function obj:remaining()
-  return math.ceil(remainingSeconds())
-end
-
 --- StudyMode:bindHotkeys(mapping)
---- Example: spoon.StudyMode:bindHotkeys({ start = {{"cmd", "alt", "ctrl"}, "S"} })
 function obj:bindHotkeys(mapping)
   local spec = {
     start = hs.fnutils.partial(self.start, self),
@@ -292,7 +410,7 @@ function obj:init()
       local now = hs.timer.secondsSinceEpoch()
       if now - lastHotkeyTime > 0.5 then
         lastHotkeyTime = now
-        hs.timer.doAfter(0, function() obj:start() end)
+        hs.timer.doAfter(0, function() obj:toggle() end)
       end
       return true
     end)
@@ -310,15 +428,35 @@ function obj:init()
   end
 
   -- Recovery on config reload
-  local savedDeadline = hs.settings.get(obj.settingsKey)
-  if type(savedDeadline) == "number" then
+  local savedMode = hs.settings.get(obj.settingsKeyMode)
+  local savedDeadline = hs.settings.get(obj.settingsKeyDeadline)
+
+  if savedMode == "STUDY" and type(savedDeadline) == "number" then
     if savedDeadline > hs.timer.secondsSinceEpoch() then
+      mode = "STUDY"
+      deadline = savedDeadline
       applyHostsBlock(true)
-      activateUntil(savedDeadline)
+      ensureOverlay()
+      updateOverlayUI()
+      stopTicker()
+      ticker = hs.timer.doEvery(1, updateLoop)
     else
-      hs.settings.set(obj.settingsKey, nil)
-      applyHostsBlock(false)
+      obj:startBreakPhase()
     end
+  elseif savedMode == "BREAK" and type(savedDeadline) == "number" then
+    if savedDeadline > hs.timer.secondsSinceEpoch() then
+      mode = "BREAK"
+      deadline = savedDeadline
+      applyHostsBlock(false)
+      ensureOverlay()
+      updateOverlayUI()
+      stopTicker()
+      ticker = hs.timer.doEvery(1, updateLoop)
+    else
+      obj:startAlarmPhase()
+    end
+  elseif savedMode == "ALARM" then
+    obj:startAlarmPhase()
   end
 
   return self

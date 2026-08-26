@@ -1,66 +1,54 @@
 # 🎯 StudyMode.spoon
 
-> A focused 45-minute study session Spoon for Hammerspoon that blocks distracting websites (**YouTube**, **Chess.com**, **Lichess**, and **Gemini AI**) and displays a non-resettable floating countdown timer.
+> An automated Pomodoro focus Spoon for Hammerspoon that cycles between **45-minute Study sessions** (blocking YouTube, Chess, and Gemini AI) and **15-minute Break sessions** (unblocking sites). Rings the macOS **Crystals** alarm when the break ends until clicked.
 
 ---
 
-## 🚀 Features
+## 🔄 How the Cycle Works
 
-- ⏱️ **45-Minute Focus Session**: Floating canvas countdown timer anchored in the top-right corner of your screen.
-- 🚫 **Distraction Blocking**: Automatically blocks:
-  - **YouTube** (`youtube.com`, `youtu.be`, `music.youtube.com`, etc.)
-  - **Chess** (`chess.com` and `lichess.org`)
-  - **Gemini AI** (`gemini.google.com`, `bard.google.com`, `aistudio.google.com`)
-- 🔒 **Non-Resettable by Design**: `fn + S` will show the remaining time, but will not cancel or restart an active session. Emergency stop is available via `spoon.StudyMode:stop()` in the Hammerspoon Console.
-- 🔄 **Auto-Recovery**: If Hammerspoon reloads or restarts during a session, StudyMode automatically resumes the timer and site blocking.
-- ⌨️ **Flexible Hotkeys**: Trigger via `fn + S` or configure custom shortcuts.
+1. 📚 **45-Minute Study Phase**:
+   - **Sites BLOCKED**: YouTube, Chess (`chess.com` & `lichess.org`), and Gemini AI (`gemini.google.com`).
+   - **HUD**: Emerald top-right floating pill (`[ 🟢 STUDY  44:59 ]`).
+   - When timer reaches `00:00`, it automatically transitions to Break mode.
+
+2. ☕ **15-Minute Break Phase**:
+   - **Sites UNBLOCKED**: YouTube, Chess, and Gemini AI are fully accessible.
+   - **HUD**: Warm amber floating pill (`[ ☕ BREAK  14:59 ]`).
+   - When timer reaches `00:00`, it automatically transitions to Alarm mode.
+
+3. 🔔 **Break Over Alarm ("Crystals")**:
+   - **Ringing**: Plays the macOS **Crystals** ringtone continuously every 2.5 seconds.
+   - **HUD**: Flashing pulsing red pill (`[ 🔔 START STUDY ]`).
+   - **Interactive Trigger**: Simply **click the top-right overlay pill** (or press `fn + S`) to stop the ringing and immediately launch your next 45-minute Study session!
 
 ---
 
 ## 📦 Installation & Setup
 
-### Step 1: Run the Helper Installer
-
-StudyMode uses a lightweight helper script to modify `/etc/hosts` passwordlessly during your session.
-
-Open Terminal and run:
-```bash
-bash ~/.hammerspoon/Spoons/StudyMode.spoon/install.sh
-```
-*(You will be prompted for your macOS admin password once to configure `/etc/sudoers.d/hammerspoon-study-mode`)*.
-
----
-
-### Step 2: Load in Hammerspoon `init.lua`
-
-Add the following lines to your `~/.hammerspoon/init.lua`:
+Add to your `~/.hammerspoon/init.lua`:
 
 ```lua
 hs.loadSpoon("StudyMode")
 spoon.StudyMode:init()
 
--- Optional: Bind a custom hotkey (e.g. Cmd+Alt+Ctrl+S) in addition to fn + S
+-- Optional custom hotkey (fn + S works by default)
 spoon.StudyMode:bindHotkeys({
     start = {{"cmd", "alt", "ctrl"}, "S"}
 })
 ```
 
-Reload your Hammerspoon config (`Cmd + Alt + Ctrl + R`).
+Reload Hammerspoon config (`Cmd + Alt + Ctrl + R`).
 
 ---
 
-## ⚙️ Configuration Options
-
-You can customize session settings before calling `:init()`:
+## ⚙️ Customization
 
 ```lua
 hs.loadSpoon("StudyMode")
 
--- Change session length (default: 45 minutes)
-spoon.StudyMode.duration = 30 * 60 -- 30 minutes
-
--- Change screen margin or overlay dimensions
-spoon.StudyMode.screenMargin = 20
+-- Change study or break duration (in seconds)
+spoon.StudyMode.studyDuration = 45 * 60 -- 45 minutes
+spoon.StudyMode.breakDuration = 15 * 60 -- 15 minutes
 
 spoon.StudyMode:init()
 ```
