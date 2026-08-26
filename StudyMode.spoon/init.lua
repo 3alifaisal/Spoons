@@ -10,7 +10,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "2.1"
+obj.version = "2.2"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -101,12 +101,6 @@ end
 
 -- Execute hosts edit via helper or direct fallback
 local function applyHostsBlock(enable)
-  if hs.fs.attributes(obj.helperPath) then
-    local cmd = enable and "on" or "off"
-    local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
-    if rc == 0 then return true end
-  end
-
   local shScript
   if enable then
     local hostsContent = generateHostsBlock()
@@ -128,6 +122,12 @@ local function applyHostsBlock(enable)
   local escapedSh = shScript:gsub('"', '\\"')
   local output, status, type, rc = hs.execute(string.format('sudo -n /bin/sh -c "%s"', escapedSh))
   if rc == 0 then return true end
+
+  if hs.fs.attributes(obj.helperPath) then
+    local cmd = enable and "on" or "off"
+    local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
+    if rc == 0 then return true end
+  end
 
   local appleScript = string.format([[do shell script %s with administrator privileges]], hs.inspect(shScript))
   local ok, res = hs.osascript.applescript(appleScript)
@@ -279,10 +279,27 @@ local function saveState()
   hs.settings.set(obj.settingsKeyDeadline, deadline)
 end
 
-local updateLoop
+-- Forward declaration of phase functions
+local startBreakPhase
+local startAlarmPhase
+local startStudyPhase
 
---- StudyMode:startAlarmPhase()
-function obj:startAlarmPhase()
+local function updateLoop()
+  if mode == "STUDY" or mode == "BREAK" then
+    local seconds = remainingSeconds()
+    updateOverlayUI()
+
+    if seconds <= 0 then
+      if mode == "STUDY" then
+        startBreakPhase()
+      elseif mode == "BREAK" then
+        startAlarmPhase()
+      end
+    end
+  end
+end
+
+startAlarmPhase = function()
   mode = "ALARM"
   deadline = nil
   stopTicker()
@@ -307,8 +324,7 @@ function obj:startAlarmPhase()
   }):send()
 end
 
---- StudyMode:startBreakPhase()
-function obj:startBreakPhase()
+startBreakPhase = function()
   mode = "BREAK"
   deadline = hs.timer.secondsSinceEpoch() + obj.breakDuration
   stopAlarmSound()
@@ -330,8 +346,7 @@ function obj:startBreakPhase()
   hs.alert.show("15-Minute Break started ☕\nSites unblocked.", 3)
 end
 
---- StudyMode:startStudyPhase()
-function obj:startStudyPhase()
+startStudyPhase = function()
   stopAlarmSound()
 
   local ok = applyHostsBlock(true)
@@ -356,31 +371,28 @@ function obj:startStudyPhase()
   )
 end
 
-updateLoop = function()
-  if mode == "STUDY" or mode == "BREAK" then
-    local seconds = remainingSeconds()
-    updateOverlayUI()
+function obj:startStudyPhase()
+  startStudyPhase()
+end
 
-    if seconds <= 0 then
-      if mode == "STUDY" then
-        obj:startBreakPhase()
-      elseif mode == "BREAK" then
-        obj:startAlarmPhase()
-      end
-    end
-  end
+function obj:startBreakPhase()
+  startBreakPhase()
+end
+
+function obj:startAlarmPhase()
+  startAlarmPhase()
 end
 
 --- StudyMode:start()
 function obj:start()
   if mode == "ALARM" then
-    self:startStudyPhase()
+    startStudyPhase()
   elseif mode == "STUDY" then
     hs.alert.show("Study Session active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   elseif mode == "BREAK" then
     hs.alert.show("Break active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   else
-    self:startStudyPhase()
+    startStudyPhase()
   end
 end
 
@@ -407,9 +419,9 @@ end
 --- StudyMode:toggle()
 function obj:toggle()
   if mode == "ALARM" then
-    self:startStudyPhase()
+    startStudyPhase()
   elseif mode == "INACTIVE" then
-    self:startStudyPhase()
+    startStudyPhase()
   else
     hs.alert.show(string.format("%s active: %s left", mode, formatRemaining(remainingSeconds())))
   end
@@ -472,7 +484,7 @@ function obj:init()
       stopTicker()
       ticker = hs.timer.doEvery(1, updateLoop)
     else
-      obj:startBreakPhase()
+      startBreakPhase()
     end
   elseif savedMode == "BREAK" and type(savedDeadline) == "number" then
     if savedDeadline > hs.timer.secondsSinceEpoch() then
@@ -484,10 +496,10 @@ function obj:init()
       stopTicker()
       ticker = hs.timer.doEvery(1, updateLoop)
     else
-      obj:startAlarmPhase()
+      startAlarmPhase()
     end
   elseif savedMode == "ALARM" then
-    obj:startAlarmPhase()
+    startAlarmPhase()
   end
 
   return self
