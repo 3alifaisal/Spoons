@@ -10,7 +10,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "2.0"
+obj.version = "2.1"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -38,16 +38,56 @@ local screenWatcher = nil
 local lastHotkeyTime = 0
 local alarmSound = nil
 
-local BLOCKED_HOSTS_BLOCK = [[
-# BEGIN HAMMERSPOON STUDY MODE
-127.0.0.1 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
-127.0.0.1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
-127.0.0.1 gemini.google.com bard.google.com aistudio.google.com
-::1 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
-::1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
-::1 gemini.google.com bard.google.com aistudio.google.com
-# END HAMMERSPOON STUDY MODE
-]]
+local BLOCKED_DOMAINS = {
+  -- YouTube Main, Subdomains, API & CDNs
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "studio.youtube.com",
+  "kids.youtube.com",
+  "tv.youtube.com",
+  "gaming.youtube.com",
+  "youtu.be",
+  "www.youtu.be",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com",
+  "googlevideo.com",
+  "www.googlevideo.com",
+  "redirector.googlevideo.com",
+  "ytimg.com",
+  "www.ytimg.com",
+  "s.ytimg.com",
+  "i.ytimg.com",
+  "yt3.ggpht.com",
+  "youtubei.googleapis.com",
+  "youtube.googleapis.com",
+
+  -- Chess (chess.com & lichess.org)
+  "chess.com",
+  "www.chess.com",
+  "v3.chess.com",
+  "lichess.org",
+  "www.lichess.org",
+  "api.lichess.org",
+  "en.lichess.org",
+
+  -- Gemini AI
+  "gemini.google.com",
+  "bard.google.com",
+  "aistudio.google.com",
+}
+
+local function generateHostsBlock()
+  local lines = { "# BEGIN HAMMERSPOON STUDY MODE" }
+  for _, domain in ipairs(BLOCKED_DOMAINS) do
+    table.insert(lines, "0.0.0.0 " .. domain)
+    table.insert(lines, "127.0.0.1 " .. domain)
+    table.insert(lines, "::1 " .. domain)
+  end
+  table.insert(lines, "# END HAMMERSPOON STUDY MODE\n")
+  return table.concat(lines, "\n")
+end
 
 local function formatRemaining(totalSeconds)
   local seconds = math.max(0, math.ceil(totalSeconds))
@@ -69,13 +109,14 @@ local function applyHostsBlock(enable)
 
   local shScript
   if enable then
+    local hostsContent = generateHostsBlock()
     shScript = string.format([[
       /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
       /bin/cat << 'EOF' >> /etc/hosts
 %sEOF
       /usr/bin/dscacheutil -flushcache
       /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-    ]], BLOCKED_HOSTS_BLOCK)
+    ]], hostsContent)
   else
     shScript = [[
       /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
@@ -238,11 +279,9 @@ local function saveState()
   hs.settings.set(obj.settingsKeyDeadline, deadline)
 end
 
--- Forward declaration
 local updateLoop
 
 --- StudyMode:startAlarmPhase()
---- Called when Break ends. Rings Crystals sound continuously until clicked/triggered.
 function obj:startAlarmPhase()
   mode = "ALARM"
   deadline = nil
@@ -252,7 +291,6 @@ function obj:startAlarmPhase()
   updateOverlayUI()
   playCrystalsRing()
 
-  -- Ring every 2.5 seconds until clicked or hotkey pressed
   stopAlarmSound()
   alarmTimer = hs.timer.doEvery(2.5, function()
     if mode == "ALARM" then
@@ -270,7 +308,6 @@ function obj:startAlarmPhase()
 end
 
 --- StudyMode:startBreakPhase()
---- Starts 15-minute Break phase: unblocks websites & counts down.
 function obj:startBreakPhase()
   mode = "BREAK"
   deadline = hs.timer.secondsSinceEpoch() + obj.breakDuration
@@ -294,7 +331,6 @@ function obj:startBreakPhase()
 end
 
 --- StudyMode:startStudyPhase()
---- Starts 45-minute Study phase: blocks websites & counts down.
 function obj:startStudyPhase()
   stopAlarmSound()
 
@@ -336,7 +372,6 @@ updateLoop = function()
 end
 
 --- StudyMode:start()
---- Main entrypoint to start Study Mode.
 function obj:start()
   if mode == "ALARM" then
     self:startStudyPhase()
@@ -350,7 +385,6 @@ function obj:start()
 end
 
 --- StudyMode:stop()
---- Emergency stop to cancel Study Mode and remove site blocks.
 function obj:stop()
   if mode == "INACTIVE" then
     hs.alert.show("Study Mode is not active")
@@ -394,7 +428,6 @@ end
 
 --- StudyMode:init()
 function obj:init()
-  -- Key tap for fn + S
   if not keyTapWatcher then
     keyTapWatcher = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(event)
       local flags = event:getFlags()
@@ -417,7 +450,6 @@ function obj:init()
     keyTapWatcher:start()
   end
 
-  -- Screen watcher for multi-monitor / space changes
   if not screenWatcher then
     screenWatcher = hs.screen.watcher.new(function()
       if overlay then
@@ -427,7 +459,6 @@ function obj:init()
     screenWatcher:start()
   end
 
-  -- Recovery on config reload
   local savedMode = hs.settings.get(obj.settingsKeyMode)
   local savedDeadline = hs.settings.get(obj.settingsKeyDeadline)
 

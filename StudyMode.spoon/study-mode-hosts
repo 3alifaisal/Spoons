@@ -105,10 +105,14 @@ turn_on() {
     domains=("$@")
   else
     domains=(
-      # YouTube
+      # YouTube Main & Subdomains
       "youtube.com" "www.youtube.com" "m.youtube.com" "music.youtube.com"
       "studio.youtube.com" "kids.youtube.com" "tv.youtube.com" "gaming.youtube.com"
       "youtu.be" "www.youtu.be" "youtube-nocookie.com" "www.youtube-nocookie.com"
+      # YouTube CDNs, InnerTube API & Assets
+      "googlevideo.com" "www.googlevideo.com" "redirector.googlevideo.com"
+      "ytimg.com" "www.ytimg.com" "s.ytimg.com" "i.ytimg.com" "yt3.ggpht.com"
+      "youtubei.googleapis.com" "youtube.googleapis.com"
       # Chess (chess.com & lichess.org)
       "chess.com" "www.chess.com" "v3.chess.com"
       "lichess.org" "www.lichess.org" "api.lichess.org" "en.lichess.org"
@@ -124,6 +128,7 @@ turn_on() {
     /usr/bin/printf '%s\n' "${begin_marker}"
     for domain in "${domains[@]}"; do
       /usr/bin/printf '0.0.0.0 %s\n' "${domain}"
+      /usr/bin/printf '127.0.0.1 %s\n' "${domain}"
       /usr/bin/printf '::1 %s\n' "${domain}"
     done
     /usr/bin/printf '%s\n' "${end_marker}"
@@ -134,7 +139,6 @@ turn_on() {
   /bin/chmod 600 "${token_file}"
   flush_dns_cache
 
-  # Independent fail-safe: if Hammerspoon quits, remove session's block after 45 minutes
   /usr/bin/nohup /bin/sh -c \
     '/bin/sleep 2700; /Library/HammerspoonStudyMode/study-mode-hosts off-if-token "$1"' \
     sh "${token}" </dev/null >/dev/null 2>&1 &
