@@ -116,8 +116,6 @@ turn_on() {
       # Chess (chess.com & lichess.org)
       "chess.com" "www.chess.com" "v3.chess.com"
       "lichess.org" "www.lichess.org" "api.lichess.org" "en.lichess.org"
-      # Gemini AI
-      "gemini.google.com" "bard.google.com" "aistudio.google.com"
     )
   fi
 

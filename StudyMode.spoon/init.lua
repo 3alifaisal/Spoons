@@ -47,7 +47,6 @@ local BLOCKED_HOSTS_BLOCK = [[
 127.0.0.1 ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com
 127.0.0.1 youtubei.googleapis.com youtube.googleapis.com
 127.0.0.1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
-127.0.0.1 gemini.google.com bard.google.com aistudio.google.com
 0.0.0.0 youtube.com www.youtube.com m.youtube.com music.youtube.com
 0.0.0.0 studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com
 0.0.0.0 youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
@@ -55,7 +54,6 @@ local BLOCKED_HOSTS_BLOCK = [[
 0.0.0.0 ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com
 0.0.0.0 youtubei.googleapis.com youtube.googleapis.com
 0.0.0.0 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
-0.0.0.0 gemini.google.com bard.google.com aistudio.google.com
 ::1 youtube.com www.youtube.com m.youtube.com music.youtube.com
 ::1 studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com
 ::1 youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
@@ -63,7 +61,6 @@ local BLOCKED_HOSTS_BLOCK = [[
 ::1 ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com
 ::1 youtubei.googleapis.com youtube.googleapis.com
 ::1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
-::1 gemini.google.com bard.google.com aistudio.google.com
 # END HAMMERSPOON STUDY MODE
 ]]
 
@@ -316,7 +313,7 @@ startBreakPhase = function()
 
   hs.notify.new({
     title = "45-Minute Study Session Complete! ☕",
-    informativeText = "15-minute break started. YouTube, Chess, & Gemini are available.",
+    informativeText = "15-minute break started. YouTube & Chess are available.",
     soundName = "Glass",
   }):send()
 
@@ -341,7 +338,7 @@ startStudyPhase = function()
   end)
 
   hs.alert.show(
-    string.format("Study Session active (%d:00)\nYouTube, Chess, & Gemini blocked.", math.floor(obj.studyDuration / 60)),
+    string.format("Study Session active (%d:00)\nYouTube & Chess blocked.", math.floor(obj.studyDuration / 60)),
     3
   )
 end

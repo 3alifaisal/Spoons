@@ -1,18 +1,18 @@
 # 🎯 StudyMode.spoon
 
-> An automated Pomodoro focus Spoon for Hammerspoon that cycles between **45-minute Study sessions** (blocking YouTube, Chess, and Gemini AI) and **15-minute Break sessions** (unblocking sites). Rings the macOS **Crystals** alarm when the break ends until clicked.
+> An automated Pomodoro focus Spoon for Hammerspoon that cycles between **45-minute Study sessions** (blocking YouTube and Chess) and **15-minute Break sessions** (unblocking sites). Rings the macOS **Crystals** alarm when the break ends until clicked.
 
 ---
 
 ## 🔄 How the Cycle Works
 
 1. 📚 **45-Minute Study Phase**:
-   - **Sites BLOCKED**: YouTube, Chess (`chess.com` & `lichess.org`), and Gemini AI (`gemini.google.com`).
+   - **Sites BLOCKED**: YouTube and Chess (`chess.com` & `lichess.org`).
    - **HUD**: Emerald top-right floating pill (`[ 🟢 STUDY  44:59 ]`).
    - When timer reaches `00:00`, it automatically transitions to Break mode.
 
 2. ☕ **15-Minute Break Phase**:
-   - **Sites UNBLOCKED**: YouTube, Chess, and Gemini AI are fully accessible.
+   - **Sites UNBLOCKED**: YouTube and Chess are fully accessible.
    - **HUD**: Warm amber floating pill (`[ ☕ BREAK  14:59 ]`).
    - When timer reaches `00:00`, it automatically transitions to Alarm mode.
 
