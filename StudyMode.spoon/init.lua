@@ -10,7 +10,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "2.3"
+obj.version = "2.4"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -38,56 +38,19 @@ local screenWatcher = nil
 local lastHotkeyTime = 0
 local alarmSound = nil
 
-local BLOCKED_DOMAINS = {
-  -- YouTube Main, Subdomains, API & CDNs
-  "youtube.com",
-  "www.youtube.com",
-  "m.youtube.com",
-  "music.youtube.com",
-  "studio.youtube.com",
-  "kids.youtube.com",
-  "tv.youtube.com",
-  "gaming.youtube.com",
-  "youtu.be",
-  "www.youtu.be",
-  "youtube-nocookie.com",
-  "www.youtube-nocookie.com",
-  "googlevideo.com",
-  "www.googlevideo.com",
-  "redirector.googlevideo.com",
-  "ytimg.com",
-  "www.ytimg.com",
-  "s.ytimg.com",
-  "i.ytimg.com",
-  "yt3.ggpht.com",
-  "youtubei.googleapis.com",
-  "youtube.googleapis.com",
-
-  -- Chess (chess.com & lichess.org)
-  "chess.com",
-  "www.chess.com",
-  "v3.chess.com",
-  "lichess.org",
-  "www.lichess.org",
-  "api.lichess.org",
-  "en.lichess.org",
-
-  -- Gemini AI
-  "gemini.google.com",
-  "bard.google.com",
-  "aistudio.google.com",
-}
-
-local function generateHostsBlock()
-  local lines = { "# BEGIN HAMMERSPOON STUDY MODE" }
-  for _, domain in ipairs(BLOCKED_DOMAINS) do
-    table.insert(lines, "0.0.0.0 " .. domain)
-    table.insert(lines, "127.0.0.1 " .. domain)
-    table.insert(lines, "::1 " .. domain)
-  end
-  table.insert(lines, "# END HAMMERSPOON STUDY MODE\n")
-  return table.concat(lines, "\n")
-end
+local BLOCKED_HOSTS_BLOCK = [[
+# BEGIN HAMMERSPOON STUDY MODE
+127.0.0.1 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com googlevideo.com www.googlevideo.com redirector.googlevideo.com ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com youtubei.googleapis.com youtube.googleapis.com
+127.0.0.1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
+127.0.0.1 gemini.google.com bard.google.com aistudio.google.com
+0.0.0.0 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com googlevideo.com www.googlevideo.com redirector.googlevideo.com ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com youtubei.googleapis.com youtube.googleapis.com
+0.0.0.0 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
+0.0.0.0 gemini.google.com bard.google.com aistudio.google.com
+::1 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com googlevideo.com www.googlevideo.com redirector.googlevideo.com ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com youtubei.googleapis.com youtube.googleapis.com
+::1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
+::1 gemini.google.com bard.google.com aistudio.google.com
+# END HAMMERSPOON STUDY MODE
+]]
 
 local function formatRemaining(totalSeconds)
   local seconds = math.max(0, math.ceil(totalSeconds))
@@ -101,32 +64,27 @@ end
 
 -- Execute hosts edit via helper or direct fallback
 local function applyHostsBlock(enable)
+  if hs.fs.attributes(obj.helperPath) then
+    local cmd = enable and "on" or "off"
+    local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
+    if rc == 0 then return true end
+  end
+
   local shScript
   if enable then
-    local hostsContent = generateHostsBlock()
     shScript = string.format([[
       /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
       /bin/cat << 'EOF' >> /etc/hosts
 %sEOF
       /usr/bin/dscacheutil -flushcache
       /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-    ]], hostsContent)
+    ]], BLOCKED_HOSTS_BLOCK)
   else
     shScript = [[
       /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
       /usr/bin/dscacheutil -flushcache
       /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
     ]]
-  end
-
-  local escapedSh = shScript:gsub('"', '\\"')
-  local output, status, type, rc = hs.execute(string.format('sudo -n /bin/sh -c "%s"', escapedSh))
-  if rc == 0 then return true end
-
-  if hs.fs.attributes(obj.helperPath) then
-    local cmd = enable and "on" or "off"
-    local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
-    if rc == 0 then return true end
   end
 
   local appleScript = string.format([[do shell script %s with administrator privileges]], hs.inspect(shScript))
@@ -174,73 +132,68 @@ end
 local function ensureOverlay()
   if overlay then return end
 
-  pcall(function()
-    overlay = hs.canvas.new({ x = 0, y = 0, w = obj.overlayWidth, h = obj.overlayHeight })
-    overlay:appendElements(
-      -- 1. Outer background pill
-      {
-        type = "rectangle",
-        action = "strokeAndFill",
-        fillColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.94 },
-        strokeColor = { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 },
-        strokeWidth = 1.4,
-        roundedRectRadii = { xRadius = 18, yRadius = 18 },
-      },
-      -- 2. Dot indicator
-      {
-        type = "circle",
-        action = "fill",
-        fillColor = { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 },
-        center = { x = 18, y = 18 },
-        radius = 4,
-      },
-      -- 3. Label ("STUDY" / "BREAK" / "🔔 START")
-      {
-        type = "text",
-        text = "STUDY",
-        textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
-        textSize = 11,
-        textFont = ".SFNS-Medium",
-        frame = { x = 28, y = 10, w = 50, h = 18 },
-      },
-      -- 4. Timer text ("45:00")
-      {
-        type = "text",
-        text = "45:00",
-        textAlignment = "right",
-        textColor = { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 },
-        textSize = 14,
-        textFont = ".SFNS-Bold",
-        frame = { x = 70, y = 9, w = 60, h = 18 },
-      }
-    )
+  overlay = hs.canvas.new({ x = 0, y = 0, w = obj.overlayWidth, h = obj.overlayHeight })
+  overlay:appendElements(
+    -- 1. Outer background pill
+    {
+      type = "rectangle",
+      action = "strokeAndFill",
+      fillColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.94 },
+      strokeColor = { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 },
+      strokeWidth = 1.4,
+      roundedRectRadii = { xRadius = 18, yRadius = 18 },
+    },
+    -- 2. Dot indicator
+    {
+      type = "circle",
+      action = "fill",
+      fillColor = { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 },
+      center = { x = 18, y = 18 },
+      radius = 4,
+    },
+    -- 3. Label ("STUDY" / "BREAK" / "🔔 START")
+    {
+      type = "text",
+      text = "STUDY",
+      textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
+      textSize = 11,
+      textFont = ".SFNS-Medium",
+      frame = { x = 28, y = 10, w = 50, h = 18 },
+    },
+    -- 4. Timer text ("45:00")
+    {
+      type = "text",
+      text = "45:00",
+      textAlignment = "right",
+      textColor = { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 },
+      textSize = 14,
+      textFont = ".SFNS-Bold",
+      frame = { x = 70, y = 9, w = 60, h = 18 },
+    }
+  )
 
-    overlay:level("overlay")
-    overlay:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
-    overlay:canvasMouseEvents({ mouseDown = true })
-    overlay:mouseCallback(function(canvas, event, id, x, y)
-      if event == "mouseDown" then
-        if mode == "ALARM" then
-          obj:startStudyPhase()
-        elseif mode == "BREAK" then
-          hs.alert.show("Break active (" .. formatRemaining(remainingSeconds()) .. " left)")
-        elseif mode == "STUDY" then
-          hs.alert.show("Study active (" .. formatRemaining(remainingSeconds()) .. " left)")
-        end
+  overlay:level(hs.canvas.windowLevels.screenSaver)
+  overlay:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
+  overlay:canvasMouseEvents({ mouseDown = true })
+  overlay:mouseCallback(function(canvas, event, id, x, y)
+    if event == "mouseDown" then
+      if mode == "ALARM" then
+        obj:startStudyPhase()
+      elseif mode == "BREAK" then
+        hs.alert.show("Break active (" .. formatRemaining(remainingSeconds()) .. " left)")
+      elseif mode == "STUDY" then
+        hs.alert.show("Study active (" .. formatRemaining(remainingSeconds()) .. " left)")
       end
-    end)
-
-    positionOverlay()
-    overlay:show()
+    end
   end)
+
+  positionOverlay()
+  overlay:show(0.15)
 end
 
 local function hideOverlay()
   if overlay then
-    pcall(function()
-      overlay:hide()
-      overlay:delete()
-    end)
+    pcall(function() overlay:delete(0.15) end)
     overlay = nil
   end
 end
@@ -256,29 +209,27 @@ local function updateOverlayUI()
   ensureOverlay()
   if not overlay then return end
 
-  pcall(function()
-    if mode == "STUDY" then
-      overlay[1].strokeColor = { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 }
-      overlay[2].fillColor = { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 }
-      overlay[3].text = "STUDY"
-      overlay[3].textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 }
-      overlay[4].text = formatRemaining(remainingSeconds())
+  if mode == "STUDY" then
+    overlay:elementAttribute(1, "strokeColor", { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 })
+    overlay:elementAttribute(2, "fillColor", { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "STUDY")
+    overlay:elementAttribute(3, "textColor", { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
 
-    elseif mode == "BREAK" then
-      overlay[1].strokeColor = { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 }
-      overlay[2].fillColor = { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 }
-      overlay[3].text = "BREAK"
-      overlay[3].textColor = { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 }
-      overlay[4].text = formatRemaining(remainingSeconds())
+  elseif mode == "BREAK" then
+    overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 })
+    overlay:elementAttribute(2, "fillColor", { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "BREAK")
+    overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
 
-    elseif mode == "ALARM" then
-      overlay[1].strokeColor = { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 }
-      overlay[2].fillColor = { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 }
-      overlay[3].text = "🔔 START"
-      overlay[3].textColor = { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 }
-      overlay[4].text = "STUDY"
-    end
-  end)
+  elseif mode == "ALARM" then
+    overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
+    overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "🔔 START")
+    overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", "STUDY")
+  end
 end
 
 local function saveState()
@@ -286,27 +237,11 @@ local function saveState()
   hs.settings.set(obj.settingsKeyDeadline, deadline)
 end
 
--- Forward declaration of phase functions
-local startBreakPhase
-local startAlarmPhase
-local startStudyPhase
+-- Forward declaration
+local updateLoop
 
-local function updateLoop()
-  if mode == "STUDY" or mode == "BREAK" then
-    local seconds = remainingSeconds()
-    updateOverlayUI()
-
-    if seconds <= 0 then
-      if mode == "STUDY" then
-        startBreakPhase()
-      elseif mode == "BREAK" then
-        startAlarmPhase()
-      end
-    end
-  end
-end
-
-startAlarmPhase = function()
+--- StudyMode:startAlarmPhase()
+function obj:startAlarmPhase()
   mode = "ALARM"
   deadline = nil
   stopTicker()
@@ -331,7 +266,8 @@ startAlarmPhase = function()
   }):send()
 end
 
-startBreakPhase = function()
+--- StudyMode:startBreakPhase()
+function obj:startBreakPhase()
   mode = "BREAK"
   deadline = hs.timer.secondsSinceEpoch() + obj.breakDuration
   stopAlarmSound()
@@ -353,14 +289,9 @@ startBreakPhase = function()
   hs.alert.show("15-Minute Break started ☕\nSites unblocked.", 3)
 end
 
-startStudyPhase = function()
+--- StudyMode:startStudyPhase()
+function obj:startStudyPhase()
   stopAlarmSound()
-
-  local ok = applyHostsBlock(true)
-  if not ok then
-    hs.alert.show("Study Mode could not update /etc/hosts.", 5)
-    return
-  end
 
   mode = "STUDY"
   deadline = hs.timer.secondsSinceEpoch() + obj.studyDuration
@@ -372,34 +303,39 @@ startStudyPhase = function()
   stopTicker()
   ticker = hs.timer.doEvery(1, updateLoop)
 
+  applyHostsBlock(true)
+
   hs.alert.show(
     string.format("Study Session active (%d:00)\nYouTube, Chess, & Gemini blocked.", math.floor(obj.studyDuration / 60)),
     3
   )
 end
 
-function obj:startStudyPhase()
-  startStudyPhase()
-end
+updateLoop = function()
+  if mode == "STUDY" or mode == "BREAK" then
+    local seconds = remainingSeconds()
+    updateOverlayUI()
 
-function obj:startBreakPhase()
-  startBreakPhase()
-end
-
-function obj:startAlarmPhase()
-  startAlarmPhase()
+    if seconds <= 0 then
+      if mode == "STUDY" then
+        obj:startBreakPhase()
+      elseif mode == "BREAK" then
+        obj:startAlarmPhase()
+      end
+    end
+  end
 end
 
 --- StudyMode:start()
 function obj:start()
   if mode == "ALARM" then
-    startStudyPhase()
+    self:startStudyPhase()
   elseif mode == "STUDY" then
     hs.alert.show("Study Session active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   elseif mode == "BREAK" then
     hs.alert.show("Break active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   else
-    startStudyPhase()
+    self:startStudyPhase()
   end
 end
 
@@ -491,7 +427,7 @@ function obj:init()
       stopTicker()
       ticker = hs.timer.doEvery(1, updateLoop)
     else
-      startBreakPhase()
+      obj:startBreakPhase()
     end
   elseif savedMode == "BREAK" and type(savedDeadline) == "number" then
     if savedDeadline > hs.timer.secondsSinceEpoch() then
@@ -503,10 +439,10 @@ function obj:init()
       stopTicker()
       ticker = hs.timer.doEvery(1, updateLoop)
     else
-      startAlarmPhase()
+      obj:startAlarmPhase()
     end
   elseif savedMode == "ALARM" then
-    startAlarmPhase()
+    obj:startAlarmPhase()
   end
 
   return self
