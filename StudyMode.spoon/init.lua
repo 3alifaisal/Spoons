@@ -10,7 +10,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "2.2"
+obj.version = "2.3"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -174,68 +174,73 @@ end
 local function ensureOverlay()
   if overlay then return end
 
-  overlay = hs.canvas.new({ x = 0, y = 0, w = obj.overlayWidth, h = obj.overlayHeight })
-  overlay:appendElements(
-    -- 1. Outer background pill
-    {
-      type = "rectangle",
-      action = "strokeAndFill",
-      fillColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.94 },
-      strokeColor = { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 },
-      strokeWidth = 1.4,
-      roundedRectRadii = { xRadius = 18, yRadius = 18 },
-    },
-    -- 2. Dot indicator
-    {
-      type = "circle",
-      action = "fill",
-      fillColor = { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 },
-      center = { x = 18, y = 18 },
-      radius = 4,
-    },
-    -- 3. Label ("STUDY" / "BREAK" / "🔔 CLICK")
-    {
-      type = "text",
-      text = "STUDY",
-      textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
-      textSize = 11,
-      textFont = ".SFNS-Medium",
-      frame = { x = 28, y = 10, w = 50, h = 18 },
-    },
-    -- 4. Timer text ("45:00")
-    {
-      type = "text",
-      text = "45:00",
-      textAlignment = "right",
-      textColor = { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 },
-      textSize = 14,
-      textFont = ".SFNS-Bold",
-      frame = { x = 70, y = 9, w = 60, h = 18 },
-    }
-  )
+  pcall(function()
+    overlay = hs.canvas.new({ x = 0, y = 0, w = obj.overlayWidth, h = obj.overlayHeight })
+    overlay:appendElements(
+      -- 1. Outer background pill
+      {
+        type = "rectangle",
+        action = "strokeAndFill",
+        fillColor = { red = 0.08, green = 0.09, blue = 0.12, alpha = 0.94 },
+        strokeColor = { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 },
+        strokeWidth = 1.4,
+        roundedRectRadii = { xRadius = 18, yRadius = 18 },
+      },
+      -- 2. Dot indicator
+      {
+        type = "circle",
+        action = "fill",
+        fillColor = { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 },
+        center = { x = 18, y = 18 },
+        radius = 4,
+      },
+      -- 3. Label ("STUDY" / "BREAK" / "🔔 START")
+      {
+        type = "text",
+        text = "STUDY",
+        textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
+        textSize = 11,
+        textFont = ".SFNS-Medium",
+        frame = { x = 28, y = 10, w = 50, h = 18 },
+      },
+      -- 4. Timer text ("45:00")
+      {
+        type = "text",
+        text = "45:00",
+        textAlignment = "right",
+        textColor = { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 },
+        textSize = 14,
+        textFont = ".SFNS-Bold",
+        frame = { x = 70, y = 9, w = 60, h = 18 },
+      }
+    )
 
-  overlay:level(hs.canvas.windowLevels.screenSaver)
-  overlay:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
-  overlay:canvasMouseEvents({ mouseDown = true })
-  overlay:mouseCallback(function(canvas, event, id, x, y)
-    if event == "mouseDown" then
-      if mode == "ALARM" then
-        obj:startStudyPhase()
-      elseif mode == "BREAK" then
-        hs.alert.show("Break active (" .. formatRemaining(remainingSeconds()) .. " left)")
-      elseif mode == "STUDY" then
-        hs.alert.show("Study active (" .. formatRemaining(remainingSeconds()) .. " left)")
+    overlay:level("overlay")
+    overlay:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
+    overlay:canvasMouseEvents({ mouseDown = true })
+    overlay:mouseCallback(function(canvas, event, id, x, y)
+      if event == "mouseDown" then
+        if mode == "ALARM" then
+          obj:startStudyPhase()
+        elseif mode == "BREAK" then
+          hs.alert.show("Break active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        elseif mode == "STUDY" then
+          hs.alert.show("Study active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        end
       end
-    end
-  end)
+    end)
 
-  positionOverlay()
-  overlay:show(0.15)
+    positionOverlay()
+    overlay:show()
+  end)
 end
 
 local function hideOverlay()
   if overlay then
-    pcall(function() overlay:delete(0.15) end)
+    pcall(function()
+      overlay:hide()
+      overlay:delete()
+    end)
     overlay = nil
   end
 end
@@ -251,27 +256,29 @@ local function updateOverlayUI()
   ensureOverlay()
   if not overlay then return end
 
-  if mode == "STUDY" then
-    overlay:elementAttribute(1, "strokeColor", { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 })
-    overlay:elementAttribute(2, "fillColor", { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 })
-    overlay:elementAttribute(3, "text", "STUDY")
-    overlay:elementAttribute(3, "textColor", { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 })
-    overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
+  pcall(function()
+    if mode == "STUDY" then
+      overlay[1].strokeColor = { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 }
+      overlay[2].fillColor = { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 }
+      overlay[3].text = "STUDY"
+      overlay[3].textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 }
+      overlay[4].text = formatRemaining(remainingSeconds())
 
-  elseif mode == "BREAK" then
-    overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 })
-    overlay:elementAttribute(2, "fillColor", { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 })
-    overlay:elementAttribute(3, "text", "BREAK")
-    overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
-    overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
+    elseif mode == "BREAK" then
+      overlay[1].strokeColor = { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 }
+      overlay[2].fillColor = { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 }
+      overlay[3].text = "BREAK"
+      overlay[3].textColor = { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 }
+      overlay[4].text = formatRemaining(remainingSeconds())
 
-  elseif mode == "ALARM" then
-    overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
-    overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 })
-    overlay:elementAttribute(3, "text", "🔔 START")
-    overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 })
-    overlay:elementAttribute(4, "text", "STUDY")
-  end
+    elseif mode == "ALARM" then
+      overlay[1].strokeColor = { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 }
+      overlay[2].fillColor = { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 }
+      overlay[3].text = "🔔 START"
+      overlay[3].textColor = { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 }
+      overlay[4].text = "STUDY"
+    end
+  end)
 end
 
 local function saveState()
