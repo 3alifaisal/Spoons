@@ -1,0 +1,220 @@
+#!/bin/bash
+set -euo pipefail
+
+HELPER_DIR="/Library/HammerspoonStudyMode"
+HELPER_PATH="${HELPER_DIR}/study-mode-hosts"
+SUDOERS_FILE="/etc/sudoers.d/hammerspoon-study-mode"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "=== Installing StudyMode Helper & Sudoers Permissions ==="
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Requesting sudo permissions to install helper..."
+  exec sudo "$0" "$@"
+fi
+
+mkdir -p "${HELPER_DIR}"
+
+if [[ -f "${SCRIPT_DIR}/study-mode-hosts" ]]; then
+  cp "${SCRIPT_DIR}/study-mode-hosts" "${HELPER_PATH}"
+else
+  cat << 'HOSTS_HELPER' > "${HELPER_PATH}"
+#!/bin/bash
+set -euo pipefail
+
+hosts_file="/etc/hosts"
+begin_marker="# BEGIN HAMMERSPOON STUDY MODE"
+end_marker="# END HAMMERSPOON STUDY MODE"
+token_file="/var/run/hammerspoon-study-mode.token"
+lock_dir="/var/run/hammerspoon-study-mode.lock"
+helper_path="/Library/HammerspoonStudyMode/study-mode-hosts"
+lock_held=0
+temporary_hosts=""
+
+cleanup_helper() {
+  if [[ -n "${temporary_hosts}" ]]; then
+    /bin/rm -f "${temporary_hosts}"
+  fi
+  if [[ "${lock_held}" -eq 1 ]]; then
+    /bin/rm -f "${lock_dir}/pid"
+    /bin/rmdir "${lock_dir}" 2>/dev/null || true
+  fi
+}
+trap cleanup_helper EXIT
+
+acquire_lock() {
+  local attempt=0 existing_pid=""
+  while ! /bin/mkdir "${lock_dir}" 2>/dev/null; do
+    if [[ -r "${lock_dir}/pid" ]]; then
+      existing_pid="$(/bin/cat "${lock_dir}/pid" 2>/dev/null || true)"
+      if [[ "${existing_pid}" =~ ^[0-9]+$ ]] && ! /bin/kill -0 "${existing_pid}" 2>/dev/null; then
+        /bin/rm -f "${lock_dir}/pid"
+        /bin/rmdir "${lock_dir}" 2>/dev/null || true
+        continue
+      fi
+    fi
+    attempt=$((attempt + 1))
+    if [[ "${attempt}" -ge 50 ]]; then
+      echo "Timed out waiting for the Study Mode hosts lock." >&2
+      exit 1
+    fi
+    /bin/sleep 0.1
+  done
+  lock_held=1
+  /bin/echo "$$" > "${lock_dir}/pid"
+}
+
+validate_markers() {
+  local begin_count end_count marker_order
+  begin_count="$(/usr/bin/grep -Fxc "${begin_marker}" "${hosts_file}" || true)"
+  end_count="$(/usr/bin/grep -Fxc "${end_marker}" "${hosts_file}" || true)"
+
+  if [[ "${begin_count}" -eq 0 && "${end_count}" -eq 0 ]]; then
+    return
+  fi
+  if [[ "${begin_count}" -ne 1 || "${end_count}" -ne 1 ]]; then
+    echo "Refusing to edit /etc/hosts: Study Mode markers are malformed." >&2
+    exit 1
+  fi
+
+  marker_order="$(/usr/bin/awk -v begin="${begin_marker}" -v end="${end_marker}" '
+    $0 == begin { begin_line = NR }
+    $0 == end   { end_line = NR }
+    END {
+      if (begin_line > 0 && end_line > begin_line) print "valid"
+      else print "invalid"
+    }
+  ' "${hosts_file}")"
+  if [[ "${marker_order}" != "valid" ]]; then
+    echo "Refusing to edit /etc/hosts: Study Mode markers are out of order." >&2
+    exit 1
+  fi
+}
+
+remove_study_block() {
+  validate_markers
+  if ! /usr/bin/grep -Fqx "${begin_marker}" "${hosts_file}"; then
+    return
+  fi
+
+  temporary_hosts="$(/usr/bin/mktemp "/tmp/hammerspoon-study-hosts.XXXXXX")"
+  /usr/bin/awk -v begin="${begin_marker}" -v end="${end_marker}" '
+    $0 == begin { inside = 1; next }
+    $0 == end   { inside = 0; next }
+    !inside     { print }
+  ' "${hosts_file}" > "${temporary_hosts}"
+
+  /bin/cat "${temporary_hosts}" > "${hosts_file}"
+  /bin/rm -f "${temporary_hosts}"
+  temporary_hosts=""
+}
+
+flush_dns_cache() {
+  /usr/bin/dscacheutil -flushcache >/dev/null 2>&1 || true
+  /usr/bin/killall -HUP mDNSResponder >/dev/null 2>&1 || true
+}
+
+turn_on() {
+  local token
+  remove_study_block
+
+  shift || true
+
+  local domains=()
+  if [[ $# -gt 0 ]]; then
+    domains=("$@")
+  else
+    domains=(
+      # YouTube
+      "youtube.com" "www.youtube.com" "m.youtube.com" "music.youtube.com"
+      "studio.youtube.com" "kids.youtube.com" "tv.youtube.com" "gaming.youtube.com"
+      "youtu.be" "www.youtu.be" "youtube-nocookie.com" "www.youtube-nocookie.com"
+      # Chess (chess.com & lichess.org)
+      "chess.com" "www.chess.com" "v3.chess.com"
+      "lichess.org" "www.lichess.org" "api.lichess.org" "en.lichess.org"
+      # Gemini AI
+      "gemini.google.com" "bard.google.com" "aistudio.google.com"
+    )
+  fi
+
+  {
+    if [[ -s "${hosts_file}" ]] && [[ -n "$(/usr/bin/tail -c 1 "${hosts_file}")" ]]; then
+      /usr/bin/printf '\n'
+    fi
+    /usr/bin/printf '%s\n' "${begin_marker}"
+    for domain in "${domains[@]}"; do
+      /usr/bin/printf '0.0.0.0 %s\n' "${domain}"
+      /usr/bin/printf '::1 %s\n' "${domain}"
+    done
+    /usr/bin/printf '%s\n' "${end_marker}"
+  } >> "${hosts_file}"
+
+  token="$(/bin/date +%s)-$$"
+  /usr/bin/printf '%s\n' "${token}" > "${token_file}"
+  /bin/chmod 600 "${token_file}"
+  flush_dns_cache
+
+  /usr/bin/nohup /bin/sh -c \
+    '/bin/sleep 2700; /Library/HammerspoonStudyMode/study-mode-hosts off-if-token "$1"' \
+    sh "${token}" </dev/null >/dev/null 2>&1 &
+}
+
+turn_off() {
+  remove_study_block
+  /bin/rm -f "${token_file}"
+  flush_dns_cache
+}
+
+turn_off_if_token_matches() {
+  local expected_token="${1:-}"
+  if [[ -n "${expected_token}" && -f "${token_file}" ]] &&
+     [[ "$(/bin/cat "${token_file}")" == "${expected_token}" ]]; then
+    turn_off
+  fi
+}
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "This helper must run as root." >&2
+  exit 1
+fi
+
+action="${1:-}"
+acquire_lock
+
+case "${action}" in
+  on)
+    turn_on "$@"
+    ;;
+  off)
+    turn_off
+    ;;
+  off-if-token)
+    turn_off_if_token_matches "${2:-}"
+    ;;
+  status)
+    validate_markers
+    if /usr/bin/grep -Fqx "${begin_marker}" "${hosts_file}"; then
+      echo "active"
+    else
+      echo "inactive"
+    fi
+    ;;
+  *)
+    echo "Usage: ${helper_path} {on|off|status}" >&2
+    exit 2
+    ;;
+esac
+HOSTS_HELPER
+fi
+
+chmod 755 "${HELPER_PATH}"
+chown root:wheel "${HELPER_PATH}"
+
+cat << 'SUDOERS' > "${SUDOERS_FILE}"
+ALL ALL=(root) NOPASSWD: /Library/HammerspoonStudyMode/study-mode-hosts
+SUDOERS
+
+chmod 440 "${SUDOERS_FILE}"
+chown root:wheel "${SUDOERS_FILE}"
+
+echo "✅ Installed ${HELPER_PATH} and configured sudoers successfully!"
