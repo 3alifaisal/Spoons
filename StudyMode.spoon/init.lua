@@ -10,7 +10,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "2.4"
+obj.version = "2.5"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -40,13 +40,28 @@ local alarmSound = nil
 
 local BLOCKED_HOSTS_BLOCK = [[
 # BEGIN HAMMERSPOON STUDY MODE
-127.0.0.1 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com googlevideo.com www.googlevideo.com redirector.googlevideo.com ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com youtubei.googleapis.com youtube.googleapis.com
+127.0.0.1 youtube.com www.youtube.com m.youtube.com music.youtube.com
+127.0.0.1 studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com
+127.0.0.1 youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
+127.0.0.1 googlevideo.com www.googlevideo.com redirector.googlevideo.com
+127.0.0.1 ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com
+127.0.0.1 youtubei.googleapis.com youtube.googleapis.com
 127.0.0.1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
 127.0.0.1 gemini.google.com bard.google.com aistudio.google.com
-0.0.0.0 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com googlevideo.com www.googlevideo.com redirector.googlevideo.com ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com youtubei.googleapis.com youtube.googleapis.com
+0.0.0.0 youtube.com www.youtube.com m.youtube.com music.youtube.com
+0.0.0.0 studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com
+0.0.0.0 youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
+0.0.0.0 googlevideo.com www.googlevideo.com redirector.googlevideo.com
+0.0.0.0 ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com
+0.0.0.0 youtubei.googleapis.com youtube.googleapis.com
 0.0.0.0 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
 0.0.0.0 gemini.google.com bard.google.com aistudio.google.com
-::1 youtube.com www.youtube.com m.youtube.com music.youtube.com studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com googlevideo.com www.googlevideo.com redirector.googlevideo.com ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com youtubei.googleapis.com youtube.googleapis.com
+::1 youtube.com www.youtube.com m.youtube.com music.youtube.com
+::1 studio.youtube.com kids.youtube.com tv.youtube.com gaming.youtube.com
+::1 youtu.be www.youtu.be youtube-nocookie.com www.youtube-nocookie.com
+::1 googlevideo.com www.googlevideo.com redirector.googlevideo.com
+::1 ytimg.com www.ytimg.com s.ytimg.com i.ytimg.com yt3.ggpht.com
+::1 youtubei.googleapis.com youtube.googleapis.com
 ::1 chess.com www.chess.com v3.chess.com lichess.org www.lichess.org api.lichess.org en.lichess.org
 ::1 gemini.google.com bard.google.com aistudio.google.com
 # END HAMMERSPOON STUDY MODE
@@ -62,34 +77,35 @@ local function remainingSeconds()
   return math.max(0, deadline - hs.timer.secondsSinceEpoch())
 end
 
--- Execute hosts edit via helper or direct fallback
+-- Execute hosts edit asynchronously/safely without blocking UI
 local function applyHostsBlock(enable)
-  if hs.fs.attributes(obj.helperPath) then
-    local cmd = enable and "on" or "off"
-    local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
-    if rc == 0 then return true end
-  end
+  pcall(function()
+    if hs.fs.attributes(obj.helperPath) then
+      local cmd = enable and "on" or "off"
+      local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
+      if rc == 0 then return end
+    end
 
-  local shScript
-  if enable then
-    shScript = string.format([[
-      /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
-      /bin/cat << 'EOF' >> /etc/hosts
+    local shScript
+    if enable then
+      shScript = string.format([[
+        /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
+        /bin/cat << 'EOF' >> /etc/hosts
 %sEOF
-      /usr/bin/dscacheutil -flushcache
-      /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-    ]], BLOCKED_HOSTS_BLOCK)
-  else
-    shScript = [[
-      /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
-      /usr/bin/dscacheutil -flushcache
-      /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
-    ]]
-  end
+        /usr/bin/dscacheutil -flushcache
+        /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
+      ]], BLOCKED_HOSTS_BLOCK)
+    else
+      shScript = [[
+        /usr/bin/sed -i '' '/# BEGIN HAMMERSPOON STUDY MODE/,/# END HAMMERSPOON STUDY MODE/d' /etc/hosts
+        /usr/bin/dscacheutil -flushcache
+        /usr/bin/killall -HUP mDNSResponder 2>/dev/null || true
+      ]]
+    end
 
-  local appleScript = string.format([[do shell script %s with administrator privileges]], hs.inspect(shScript))
-  local ok, res = hs.osascript.applescript(appleScript)
-  return ok
+    local appleScript = string.format([[do shell script %s with administrator privileges]], hs.inspect(shScript))
+    hs.osascript.applescript(appleScript)
+  end)
 end
 
 local function stopAlarmSound()
@@ -117,7 +133,7 @@ end
 
 local function positionOverlay()
   if not overlay then return end
-  local screen = hs.screen.mainScreen()
+  local screen = hs.screen.mainScreen() or hs.screen.primaryScreen()
   if not screen then return end
 
   local frame = screen:frame()
@@ -172,8 +188,8 @@ local function ensureOverlay()
     }
   )
 
-  overlay:level(hs.drawing.windowLevels.overlay)
-  overlay:behavior({ "canJoinAllSpaces", "stationary", "ignoresCycle" })
+  overlay:level(hs.canvas.windowLevels.screenSaver)
+  overlay:behavior({ "canJoinAllSpaces", "stationary" })
   overlay:canvasMouseEvents({ mouseDown = true })
   overlay:mouseCallback(function(canvas, event, id, x, y)
     if event == "mouseDown" then
@@ -188,7 +204,7 @@ local function ensureOverlay()
   end)
 
   positionOverlay()
-  overlay:show()
+  overlay:show(0.15)
 end
 
 local function hideOverlay()
@@ -237,11 +253,27 @@ local function saveState()
   hs.settings.set(obj.settingsKeyDeadline, deadline)
 end
 
--- Forward declaration
-local updateLoop
+-- Forward declaration of phase functions
+local startBreakPhase
+local startAlarmPhase
+local startStudyPhase
 
---- StudyMode:startAlarmPhase()
-function obj:startAlarmPhase()
+local function updateLoop()
+  if mode == "STUDY" or mode == "BREAK" then
+    local seconds = remainingSeconds()
+    updateOverlayUI()
+
+    if seconds <= 0 then
+      if mode == "STUDY" then
+        startBreakPhase()
+      elseif mode == "BREAK" then
+        startAlarmPhase()
+      end
+    end
+  end
+end
+
+startAlarmPhase = function()
   mode = "ALARM"
   deadline = nil
   stopTicker()
@@ -266,19 +298,21 @@ function obj:startAlarmPhase()
   }):send()
 end
 
---- StudyMode:startBreakPhase()
-function obj:startBreakPhase()
+startBreakPhase = function()
   mode = "BREAK"
   deadline = hs.timer.secondsSinceEpoch() + obj.breakDuration
   stopAlarmSound()
   saveState()
 
-  applyHostsBlock(false)
   ensureOverlay()
   updateOverlayUI()
 
   stopTicker()
   ticker = hs.timer.doEvery(1, updateLoop)
+
+  hs.timer.doAfter(0.01, function()
+    applyHostsBlock(false)
+  end)
 
   hs.notify.new({
     title = "45-Minute Study Session Complete! ☕",
@@ -289,8 +323,7 @@ function obj:startBreakPhase()
   hs.alert.show("15-Minute Break started ☕\nSites unblocked.", 3)
 end
 
---- StudyMode:startStudyPhase()
-function obj:startStudyPhase()
+startStudyPhase = function()
   stopAlarmSound()
 
   mode = "STUDY"
@@ -303,7 +336,9 @@ function obj:startStudyPhase()
   stopTicker()
   ticker = hs.timer.doEvery(1, updateLoop)
 
-  applyHostsBlock(true)
+  hs.timer.doAfter(0.01, function()
+    applyHostsBlock(true)
+  end)
 
   hs.alert.show(
     string.format("Study Session active (%d:00)\nYouTube, Chess, & Gemini blocked.", math.floor(obj.studyDuration / 60)),
@@ -311,31 +346,28 @@ function obj:startStudyPhase()
   )
 end
 
-updateLoop = function()
-  if mode == "STUDY" or mode == "BREAK" then
-    local seconds = remainingSeconds()
-    updateOverlayUI()
+function obj:startStudyPhase()
+  startStudyPhase()
+end
 
-    if seconds <= 0 then
-      if mode == "STUDY" then
-        obj:startBreakPhase()
-      elseif mode == "BREAK" then
-        obj:startAlarmPhase()
-      end
-    end
-  end
+function obj:startBreakPhase()
+  startBreakPhase()
+end
+
+function obj:startAlarmPhase()
+  startAlarmPhase()
 end
 
 --- StudyMode:start()
 function obj:start()
   if mode == "ALARM" then
-    self:startStudyPhase()
+    startStudyPhase()
   elseif mode == "STUDY" then
     hs.alert.show("Study Session active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   elseif mode == "BREAK" then
     hs.alert.show("Break active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   else
-    self:startStudyPhase()
+    startStudyPhase()
   end
 end
 
@@ -354,7 +386,10 @@ function obj:stop()
 
   hs.settings.set(obj.settingsKeyMode, nil)
   hs.settings.set(obj.settingsKeyDeadline, nil)
-  applyHostsBlock(false)
+
+  hs.timer.doAfter(0.01, function()
+    applyHostsBlock(false)
+  end)
 
   hs.alert.show("Study Mode stopped")
 end
@@ -362,9 +397,9 @@ end
 --- StudyMode:toggle()
 function obj:toggle()
   if mode == "ALARM" then
-    self:startStudyPhase()
+    startStudyPhase()
   elseif mode == "INACTIVE" then
-    self:startStudyPhase()
+    startStudyPhase()
   else
     hs.alert.show(string.format("%s active: %s left", mode, formatRemaining(remainingSeconds())))
   end
@@ -421,28 +456,28 @@ function obj:init()
     if savedDeadline > hs.timer.secondsSinceEpoch() then
       mode = "STUDY"
       deadline = savedDeadline
-      applyHostsBlock(true)
       ensureOverlay()
       updateOverlayUI()
       stopTicker()
       ticker = hs.timer.doEvery(1, updateLoop)
+      hs.timer.doAfter(0.01, function() applyHostsBlock(true) end)
     else
-      obj:startBreakPhase()
+      startBreakPhase()
     end
   elseif savedMode == "BREAK" and type(savedDeadline) == "number" then
     if savedDeadline > hs.timer.secondsSinceEpoch() then
       mode = "BREAK"
       deadline = savedDeadline
-      applyHostsBlock(false)
       ensureOverlay()
       updateOverlayUI()
       stopTicker()
       ticker = hs.timer.doEvery(1, updateLoop)
+      hs.timer.doAfter(0.01, function() applyHostsBlock(false) end)
     else
-      obj:startAlarmPhase()
+      startAlarmPhase()
     end
   elseif savedMode == "ALARM" then
-    obj:startAlarmPhase()
+    startAlarmPhase()
   end
 
   return self
