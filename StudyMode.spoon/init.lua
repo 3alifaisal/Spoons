@@ -188,9 +188,9 @@ local function ensureOverlay()
     }
   )
 
-  overlay:level(hs.canvas.windowLevels.screenSaver)
+  overlay:level(hs.drawing.windowLevels.overlay)
   overlay:behavior({ "canJoinAllSpaces", "stationary" })
-  overlay:canvasMouseEvents({ mouseDown = true })
+  overlay:canvasMouseEvents(true)
   overlay:mouseCallback(function(canvas, event, id, x, y)
     if event == "mouseDown" then
       if mode == "ALARM" then
@@ -204,7 +204,7 @@ local function ensureOverlay()
   end)
 
   positionOverlay()
-  overlay:show(0.15)
+  overlay:show()
 end
 
 local function hideOverlay()
