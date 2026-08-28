@@ -149,7 +149,14 @@ local function removeTitleAndMarkup(raw, title)
         text = rest or ""
     end
 
-    return text:gsub("^\n+", "")
+    text = text:gsub("^\n+", "")
+
+    if text:find("16:00 %-") and not text:find("17:00 %-") then
+        local extension = "16:00 —\n17:00 —\n18:00 —\n19:00 —\n20:00 —\n21:00 —\n22:00 —\n23:00 —\n24:00 —"
+        text = text:gsub("16:00 %-%s*\n?", extension .. "\n")
+    end
+
+    return text
 end
 
 -- AppleScript receives Base64 strings to avoid quote/newline issues.
