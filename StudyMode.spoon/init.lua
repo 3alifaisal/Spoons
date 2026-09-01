@@ -1,8 +1,11 @@
 --- === StudyMode ===
 ---
 --- Focus mode Spoon for Hammerspoon.
---- Cycles between a 45-minute Study phase (blocking sites) and a 15-minute Break phase (unblocking sites).
---- When the break ends, it continuously rings the 'Crystals' sound until clicked or triggered to start a new cycle.
+--- Cycles between Study sessions (blocking sites) and Break sessions (unblocking sites).
+--- Includes Hardcore Mode (activated by pressing fn+S 3 times rapidly):
+---   - 40 min Study / 20 min Break
+---   - Cannot be stopped manually (Console/Hotkey stop requests are denied)
+---   - Automatically ends only after 5 consecutive study sessions complete.
 ---
 
 local obj = {}
@@ -10,18 +13,25 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "2.5"
+obj.version = "3.0"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
 
 -- Configuration
-obj.studyDuration = 45 * 60 -- 45 minutes study
-obj.breakDuration = 15 * 60 -- 15 minutes break
+obj.studyDuration = 45 * 60 -- 45 minutes normal study
+obj.breakDuration = 15 * 60 -- 15 minutes normal break
+obj.hardcoreStudyDuration = 40 * 60 -- 40 minutes hardcore study
+obj.hardcoreBreakDuration = 20 * 60 -- 20 minutes hardcore break
+obj.hardcoreTotalSessions = 5       -- 5 consecutive sessions
+
 obj.helperPath = "/Library/HammerspoonStudyMode/study-mode-hosts"
 obj.settingsKeyDeadline = "hammerspoon.studyMode.deadline"
 obj.settingsKeyMode = "hammerspoon.studyMode.mode"
-obj.overlayWidth = 144
+obj.settingsKeyHardcore = "hammerspoon.studyMode.hardcore"
+obj.settingsKeySessionCount = "hammerspoon.studyMode.sessionCount"
+
+obj.overlayWidth = 152
 obj.overlayHeight = 36
 obj.screenMargin = 12
 obj.soundFile = "/System/Library/PrivateFrameworks/ToneLibrary.framework/Versions/A/Resources/Ringtones/Crystals.m4r"
@@ -29,6 +39,8 @@ obj.defaultHotkey = { { "cmd", "alt", "ctrl" }, "S" }
 
 -- Internal state
 local mode = "INACTIVE" -- "STUDY", "BREAK", "ALARM", "INACTIVE"
+local isHardcore = false
+local currentSession = 1
 local deadline = nil
 local ticker = nil
 local alarmTimer = nil
@@ -36,6 +48,8 @@ local overlay = nil
 local keyTapWatcher = nil
 local screenWatcher = nil
 local lastHotkeyTime = 0
+local pressCount = 0
+local pressTimer = nil
 local alarmSound = nil
 
 local BLOCKED_HOSTS_BLOCK = [[
@@ -142,6 +156,9 @@ local function positionOverlay()
   })
 end
 
+-- Forward declaration
+local handleAlarmClick
+
 local function ensureOverlay()
   if overlay then return end
 
@@ -164,16 +181,16 @@ local function ensureOverlay()
       center = { x = 18, y = 18 },
       radius = 4,
     },
-    -- 3. Label ("STUDY" / "BREAK" / "🔔 START")
+    -- 3. Label ("STUDY" / "BREAK" / "🔥 1/5")
     {
       type = "text",
       text = "STUDY",
       textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
       textSize = 11,
       textFont = ".SFNS-Medium",
-      frame = { x = 28, y = 10, w = 50, h = 18 },
+      frame = { x = 28, y = 10, w = 56, h = 18 },
     },
-    -- 4. Timer text ("45:00")
+    -- 4. Timer text ("40:00")
     {
       type = "text",
       text = "45:00",
@@ -181,7 +198,7 @@ local function ensureOverlay()
       textColor = { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 },
       textSize = 14,
       textFont = ".SFNS-Bold",
-      frame = { x = 70, y = 9, w = 60, h = 18 },
+      frame = { x = 74, y = 9, w = 64, h = 18 },
     }
   )
 
@@ -191,11 +208,13 @@ local function ensureOverlay()
   overlay:mouseCallback(function(canvas, event, id, x, y)
     if event == "mouseDown" then
       if mode == "ALARM" then
-        obj:startStudyPhase()
+        handleAlarmClick()
       elseif mode == "BREAK" then
-        hs.alert.show("Break active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        local tag = isHardcore and string.format("🔥 Hardcore Break (%d/5)", currentSession) or "Break"
+        hs.alert.show(tag .. " active (" .. formatRemaining(remainingSeconds()) .. " left)")
       elseif mode == "STUDY" then
-        hs.alert.show("Study active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        local tag = isHardcore and string.format("🔥 Hardcore Study (%d/5)", currentSession) or "Study"
+        hs.alert.show(tag .. " active (" .. formatRemaining(remainingSeconds()) .. " left)")
       end
     end
   end)
@@ -223,23 +242,41 @@ local function updateOverlayUI()
   if not overlay then return end
 
   if mode == "STUDY" then
-    overlay:elementAttribute(1, "strokeColor", { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 })
-    overlay:elementAttribute(2, "fillColor", { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 })
-    overlay:elementAttribute(3, "text", "STUDY")
-    overlay:elementAttribute(3, "textColor", { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 })
+    if isHardcore then
+      overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.25, blue = 0.25, alpha = 0.95 })
+      overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
+      overlay:elementAttribute(3, "text", string.format("🔥 %d/%d", currentSession, obj.hardcoreTotalSessions))
+      overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.60, blue = 0.60, alpha = 1.0 })
+    else
+      overlay:elementAttribute(1, "strokeColor", { red = 0.20, green = 0.85, blue = 0.55, alpha = 0.90 })
+      overlay:elementAttribute(2, "fillColor", { red = 0.22, green = 0.90, blue = 0.55, alpha = 1.0 })
+      overlay:elementAttribute(3, "text", "STUDY")
+      overlay:elementAttribute(3, "textColor", { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 })
+    end
     overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
 
   elseif mode == "BREAK" then
-    overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 })
-    overlay:elementAttribute(2, "fillColor", { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 })
-    overlay:elementAttribute(3, "text", "BREAK")
-    overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
+    if isHardcore then
+      overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.55, blue = 0.20, alpha = 0.95 })
+      overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.60, blue = 0.25, alpha = 1.0 })
+      overlay:elementAttribute(3, "text", string.format("☕ %d/%d", currentSession, obj.hardcoreTotalSessions))
+      overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.75, blue = 0.45, alpha = 1.0 })
+    else
+      overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 })
+      overlay:elementAttribute(2, "fillColor", { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 })
+      overlay:elementAttribute(3, "text", "BREAK")
+      overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
+    end
     overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
 
   elseif mode == "ALARM" then
     overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
     overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 })
-    overlay:elementAttribute(3, "text", "🔔 START")
+    if isHardcore then
+      overlay:elementAttribute(3, "text", string.format("🔔 %d/%d", currentSession, obj.hardcoreTotalSessions))
+    else
+      overlay:elementAttribute(3, "text", "🔔 START")
+    end
     overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 })
     overlay:elementAttribute(4, "text", "STUDY")
   end
@@ -248,9 +285,11 @@ end
 local function saveState()
   hs.settings.set(obj.settingsKeyMode, mode)
   hs.settings.set(obj.settingsKeyDeadline, deadline)
+  hs.settings.set(obj.settingsKeyHardcore, isHardcore)
+  hs.settings.set(obj.settingsKeySessionCount, currentSession)
 end
 
--- Forward declaration of phase functions
+-- Forward declarations of phase functions
 local startBreakPhase
 local startAlarmPhase
 local startStudyPhase
@@ -267,6 +306,44 @@ local function updateLoop()
         startAlarmPhase()
       end
     end
+  end
+end
+
+handleAlarmClick = function()
+  if isHardcore then
+    if currentSession < obj.hardcoreTotalSessions then
+      currentSession = currentSession + 1
+      saveState()
+      startStudyPhase()
+    else
+      -- 5th session finished! Hardcore mode ends on its own.
+      isHardcore = false
+      currentSession = 1
+      mode = "INACTIVE"
+      deadline = nil
+      stopTicker()
+      stopAlarmSound()
+      hideOverlay()
+
+      hs.settings.set(obj.settingsKeyMode, nil)
+      hs.settings.set(obj.settingsKeyDeadline, nil)
+      hs.settings.set(obj.settingsKeyHardcore, nil)
+      hs.settings.set(obj.settingsKeySessionCount, nil)
+
+      hs.timer.doAfter(0.01, function()
+        applyHostsBlock(false)
+      end)
+
+      hs.notify.new({
+        title = "🎉 HARDCORE MODE COMPLETE! 🏆",
+        informativeText = "5 consecutive 40-minute study sessions finished on its own! Incredible job!",
+        soundName = "Glass",
+      }):send()
+
+      hs.alert.show("🎉 HARDCORE MODE COMPLETE!\nAll 5 sessions finished on its own!", 5)
+    end
+  else
+    startStudyPhase()
   end
 end
 
@@ -288,16 +365,21 @@ startAlarmPhase = function()
     end
   end)
 
+  local infoText = isHardcore
+    and string.format("Hardcore Session %d/%d break over! Click timer or press fn+S to start next session.", currentSession, obj.hardcoreTotalSessions)
+    or "Click the top-right timer or press fn+S to start your next 45-minute study session."
+
   hs.notify.new({
     title = "Break is over! 🔔",
-    informativeText = "Click the top-right timer or press fn+S to start your next 45-minute study session.",
+    informativeText = infoText,
     soundName = "Crystals",
   }):send()
 end
 
 startBreakPhase = function()
   mode = "BREAK"
-  deadline = hs.timer.secondsSinceEpoch() + obj.breakDuration
+  local breakDur = isHardcore and obj.hardcoreBreakDuration or obj.breakDuration
+  deadline = hs.timer.secondsSinceEpoch() + breakDur
   stopAlarmSound()
   saveState()
 
@@ -311,20 +393,29 @@ startBreakPhase = function()
     applyHostsBlock(false)
   end)
 
+  local titleMsg = isHardcore
+    and string.format("🔥 Hardcore Session %d/%d Study Complete! ☕", currentSession, obj.hardcoreTotalSessions)
+    ["45-Minute Study Session Complete! ☕"]
+
+  local breakMsg = isHardcore
+    and string.format("20-Minute Break started (Session %d/%d) ☕\nSites unblocked.", currentSession, obj.hardcoreTotalSessions)
+    or "15-Minute Break started ☕\nSites unblocked."
+
   hs.notify.new({
-    title = "45-Minute Study Session Complete! ☕",
-    informativeText = "15-minute break started. YouTube & Chess are available.",
+    title = isHardcore and string.format("🔥 Hardcore Session %d/%d Complete! ☕", currentSession, obj.hardcoreTotalSessions) or "45-Minute Study Session Complete! ☕",
+    informativeText = isHardcore and "20-minute break started. YouTube & Chess are available." or "15-minute break started. YouTube & Chess are available.",
     soundName = "Glass",
   }):send()
 
-  hs.alert.show("15-Minute Break started ☕\nSites unblocked.", 3)
+  hs.alert.show(breakMsg, 3)
 end
 
 startStudyPhase = function()
   stopAlarmSound()
 
   mode = "STUDY"
-  deadline = hs.timer.secondsSinceEpoch() + obj.studyDuration
+  local studyDur = isHardcore and obj.hardcoreStudyDuration or obj.studyDuration
+  deadline = hs.timer.secondsSinceEpoch() + studyDur
   saveState()
 
   ensureOverlay()
@@ -337,10 +428,11 @@ startStudyPhase = function()
     applyHostsBlock(true)
   end)
 
-  hs.alert.show(
-    string.format("Study Session active (%d:00)\nYouTube & Chess blocked.", math.floor(obj.studyDuration / 60)),
-    3
-  )
+  local alertMsg = isHardcore
+    and string.format("🔥 HARDCORE MODE: Session %d/%d (%d:00)\nYouTube & Chess blocked.", currentSession, obj.hardcoreTotalSessions, math.floor(studyDur / 60))
+    or string.format("Study Session active (%d:00)\nYouTube & Chess blocked.", math.floor(studyDur / 60))
+
+  hs.alert.show(alertMsg, 3)
 end
 
 function obj:startStudyPhase()
@@ -355,21 +447,62 @@ function obj:startAlarmPhase()
   startAlarmPhase()
 end
 
+--- StudyMode:activateHardcoreMode()
+--- Activates Hardcore Mode: 5 consecutive sessions (40m Study / 20m Break), non-removable.
+function obj:activateHardcoreMode()
+  if isHardcore then
+    hs.alert.show(
+      string.format("🔥 HARDCORE MODE ALREADY ACTIVE (%d/%d sessions)", currentSession, obj.hardcoreTotalSessions),
+      4
+    )
+    return
+  end
+
+  isHardcore = true
+  currentSession = 1
+  saveState()
+
+  hs.notify.new({
+    title = "🔥 HARDCORE MODE ACTIVATED!",
+    informativeText = "5 consecutive sessions (40m Study / 20m Break).\nCANNOT be stopped manually!",
+    soundName = "Hero",
+  }):send()
+
+  hs.alert.show(
+    "🔥 HARDCORE MODE ACTIVATED!\n5 Sessions: 40m Study / 20m Break\nCANNOT BE STOPPED MANUALLY.",
+    5
+  )
+
+  startStudyPhase()
+end
+
 --- StudyMode:start()
 function obj:start()
   if mode == "ALARM" then
-    startStudyPhase()
+    handleAlarmClick()
   elseif mode == "STUDY" then
-    hs.alert.show("Study Session active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+    local tag = isHardcore and string.format("🔥 Hardcore Session %d/%d", currentSession, obj.hardcoreTotalSessions) or "Study Session"
+    hs.alert.show(tag .. " active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   elseif mode == "BREAK" then
-    hs.alert.show("Break active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+    local tag = isHardcore and string.format("🔥 Hardcore Break %d/%d", currentSession, obj.hardcoreTotalSessions) or "Break"
+    hs.alert.show(tag .. " active: " .. formatRemaining(remainingSeconds()) .. " remaining")
   else
     startStudyPhase()
   end
 end
 
 --- StudyMode:stop()
+--- Emergency stop request. Blocked during Hardcore Mode!
 function obj:stop()
+  if isHardcore then
+    hs.alert.show(
+      string.format("🔥 HARDCORE MODE IS ACTIVE (%d/%d)\nCannot be stopped until 5 sessions complete!", currentSession, obj.hardcoreTotalSessions),
+      5
+    )
+    print("🔥 Hardcore Mode is active. Stop request denied.")
+    return false
+  end
+
   if mode == "INACTIVE" then
     hs.alert.show("Study Mode is not active")
     return
@@ -383,6 +516,8 @@ function obj:stop()
 
   hs.settings.set(obj.settingsKeyMode, nil)
   hs.settings.set(obj.settingsKeyDeadline, nil)
+  hs.settings.set(obj.settingsKeyHardcore, nil)
+  hs.settings.set(obj.settingsKeySessionCount, nil)
 
   hs.timer.doAfter(0.01, function()
     applyHostsBlock(false)
@@ -394,11 +529,12 @@ end
 --- StudyMode:toggle()
 function obj:toggle()
   if mode == "ALARM" then
-    startStudyPhase()
+    handleAlarmClick()
   elseif mode == "INACTIVE" then
     startStudyPhase()
   else
-    hs.alert.show(string.format("%s active: %s left", mode, formatRemaining(remainingSeconds())))
+    local tag = isHardcore and string.format("🔥 Hardcore %s (%d/%d)", mode, currentSession, obj.hardcoreTotalSessions) or mode
+    hs.alert.show(string.format("%s active: %s left", tag, formatRemaining(remainingSeconds())))
   end
 end
 
@@ -428,10 +564,30 @@ function obj:init()
       if not isStudyShortcut then return false end
 
       local now = hs.timer.secondsSinceEpoch()
-      if now - lastHotkeyTime > 0.5 then
-        lastHotkeyTime = now
-        hs.timer.doAfter(0, function() obj:toggle() end)
+      pressCount = pressCount + 1
+
+      if pressTimer then
+        pressTimer:stop()
       end
+      pressTimer = hs.timer.doAfter(1.5, function()
+        pressCount = 0
+        pressTimer = nil
+      end)
+
+      if pressCount >= 3 then
+        pressCount = 0
+        if pressTimer then
+          pressTimer:stop()
+          pressTimer = nil
+        end
+        hs.timer.doAfter(0, function() obj:activateHardcoreMode() end)
+      else
+        if now - lastHotkeyTime > 0.4 then
+          lastHotkeyTime = now
+          hs.timer.doAfter(0, function() obj:toggle() end)
+        end
+      end
+
       return true
     end)
     keyTapWatcher:start()
@@ -446,8 +602,16 @@ function obj:init()
     screenWatcher:start()
   end
 
+  -- Recovery on config reload / restart
   local savedMode = hs.settings.get(obj.settingsKeyMode)
   local savedDeadline = hs.settings.get(obj.settingsKeyDeadline)
+  local savedHardcore = hs.settings.get(obj.settingsKeyHardcore)
+  local savedCount = hs.settings.get(obj.settingsKeySessionCount)
+
+  if savedHardcore == true then
+    isHardcore = true
+    currentSession = type(savedCount) == "number" and savedCount or 1
+  end
 
   if savedMode == "STUDY" and type(savedDeadline) == "number" then
     if savedDeadline > hs.timer.secondsSinceEpoch() then

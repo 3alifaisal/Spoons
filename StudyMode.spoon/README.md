@@ -1,25 +1,25 @@
 # 🎯 StudyMode.spoon
 
-> An automated Pomodoro focus Spoon for Hammerspoon that cycles between **45-minute Study sessions** (blocking YouTube and Chess) and **15-minute Break sessions** (unblocking sites). Rings the macOS **Crystals** alarm when the break ends until clicked.
+> An automated Pomodoro focus Spoon for Hammerspoon that cycles between Study sessions (blocking YouTube and Chess) and Break sessions (unblocking sites). Includes a **🔥 Hardcore Mode** triggered by pressing `fn + S` 3 times rapidly.
 
 ---
 
-## 🔄 How the Cycle Works
+## 🔄 How the Cycles Work
 
-1. 📚 **45-Minute Study Phase**:
-   - **Sites BLOCKED**: YouTube and Chess (`chess.com` & `lichess.org`).
-   - **HUD**: Emerald top-right floating pill (`[ 🟢 STUDY  44:59 ]`).
-   - When timer reaches `00:00`, it automatically transitions to Break mode.
+### 1. Standard Mode
+- 📚 **45-Minute Study**: YouTube & Chess **BLOCKED**. HUD: `[ 🟢 STUDY  44:59 ]`.
+- ☕ **15-Minute Break**: YouTube & Chess **UNBLOCKED**. HUD: `[ ☕ BREAK  14:59 ]`.
+- 🔔 **Break Over Alarm**: Rings macOS **Crystals** sound continuously until clicked or `fn + S` pressed.
 
-2. ☕ **15-Minute Break Phase**:
-   - **Sites UNBLOCKED**: YouTube and Chess are fully accessible.
-   - **HUD**: Warm amber floating pill (`[ ☕ BREAK  14:59 ]`).
-   - When timer reaches `00:00`, it automatically transitions to Alarm mode.
+---
 
-3. 🔔 **Break Over Alarm ("Crystals")**:
-   - **Ringing**: Plays the macOS **Crystals** ringtone continuously every 2.5 seconds.
-   - **HUD**: Flashing pulsing red pill (`[ 🔔 START STUDY ]`).
-   - **Interactive Trigger**: Simply **click the top-right overlay pill** (or press `fn + S`) to stop the ringing and immediately launch your next 45-minute Study session!
+### 2. 🔥 Hardcore Mode (`fn + S` 3 Times)
+Triggered by pressing **`fn + S` 3 times in rapid succession** (within 1.5 seconds):
+
+- ⏱️ **40-Minute Study / 20-Minute Break**: 40 mins study (sites blocked), 20 mins break (sites unblocked).
+- 🔒 **Non-Removable**: Cannot be stopped manually via Console (`spoon.StudyMode:stop()`) or hotkeys.
+- 🔁 **5 Consecutive Sessions**: Automatically ends only after completing 5 full study sessions.
+- 🎨 **HUD Badging**: Displays glowing red theme with session progress `[ 🔥 1/5  39:59 ]`.
 
 ---
 
@@ -46,9 +46,14 @@ Reload Hammerspoon config (`Cmd + Alt + Ctrl + R`).
 ```lua
 hs.loadSpoon("StudyMode")
 
--- Change study or break duration (in seconds)
+-- Standard durations
 spoon.StudyMode.studyDuration = 45 * 60 -- 45 minutes
 spoon.StudyMode.breakDuration = 15 * 60 -- 15 minutes
+
+-- Hardcore mode durations
+spoon.StudyMode.hardcoreStudyDuration = 40 * 60 -- 40 minutes
+spoon.StudyMode.hardcoreBreakDuration = 20 * 60 -- 20 minutes
+spoon.StudyMode.hardcoreTotalSessions = 5       -- 5 sessions
 
 spoon.StudyMode:init()
 ```
