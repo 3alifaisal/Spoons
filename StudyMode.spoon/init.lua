@@ -24,6 +24,8 @@ obj.breakDuration = 15 * 60 -- 15 minutes normal break
 obj.hardcoreStudyDuration = 40 * 60 -- 40 minutes hardcore study
 obj.hardcoreBreakDuration = 20 * 60 -- 20 minutes hardcore break
 obj.hardcoreTotalSessions = 5       -- 5 consecutive sessions
+obj.inactivityTimeout = 60          -- 60 seconds (1 minute) inactivity threshold
+obj.enableInactivityAlarm = true    -- Enable inactivity alarm during study sessions
 
 obj.helperPath = "/Library/HammerspoonStudyMode/study-mode-hosts"
 obj.settingsKeyDeadline = "hammerspoon.studyMode.deadline"
@@ -51,6 +53,7 @@ local lastHotkeyTime = 0
 local pressCount = 0
 local pressTimer = nil
 local alarmSound = nil
+local isIdleRinging = false
 
 local BLOCKED_HOSTS_BLOCK = [[
 # BEGIN HAMMERSPOON STUDY MODE
@@ -299,7 +302,29 @@ local function updateLoop()
     local seconds = remainingSeconds()
     updateOverlayUI()
 
+    -- Inactivity detection during STUDY phase (no mouse/key/scroll input for 60s)
+    if mode == "STUDY" and obj.enableInactivityAlarm then
+      local idleSecs = hs.host.idleTime()
+      if idleSecs >= obj.inactivityTimeout then
+        if not isIdleRinging then
+          isIdleRinging = true
+          playCrystalsRing()
+          hs.alert.show("⚠️ INACTIVITY DETECTED!\nNo input for 60s — back to studying!", 4)
+        end
+      else
+        if isIdleRinging then
+          isIdleRinging = false
+          stopAlarmSound()
+        end
+      end
+    end
+
     if seconds <= 0 then
+      if isIdleRinging then
+        isIdleRinging = false
+        stopAlarmSound()
+      end
+
       if mode == "STUDY" then
         startBreakPhase()
       elseif mode == "BREAK" then

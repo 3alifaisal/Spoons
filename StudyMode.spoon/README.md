@@ -1,6 +1,6 @@
 # 🎯 StudyMode.spoon
 
-> An automated Pomodoro focus Spoon for Hammerspoon that cycles between Study sessions (blocking YouTube and Chess) and Break sessions (unblocking sites). Includes a **🔥 Hardcore Mode** triggered by holding `fn + S` for 3 seconds.
+> An automated Pomodoro focus Spoon for Hammerspoon that cycles between Study sessions (blocking YouTube and Chess) and Break sessions (unblocking sites). Includes **🔥 Hardcore Mode** and **⚠️ Inactivity Detection**.
 
 ---
 
@@ -13,7 +13,16 @@
 
 ---
 
-### 2. 🔥 Hardcore Mode (Hold `fn + S` for 3 Seconds)
+### 2. ⚠️ Inactivity / Slacking Detection (1 Minute)
+During a Study Session (in both Standard & Hardcore Mode):
+- **1-Minute Idle Threshold**: If no user input (mouse move, click, scrolling, key press) occurs for **60 seconds**, the **Crystals** alarm rings to wake you up!
+- **Alert Banner**: Displays `⚠️ INACTIVITY DETECTED! No input for 60s — back to studying!`.
+- **Instant Silence**: Simply moving your mouse, scrolling, or pressing any key immediately silences the alarm.
+- Disabled automatically during Break sessions.
+
+---
+
+### 3. 🔥 Hardcore Mode (Hold `fn + S` for 3 Seconds)
 Triggered by **holding `fn + S` continuously for 3 seconds** (overrides standard Study Mode if already running):
 
 - ⏱️ **40-Minute Study / 20-Minute Break**: 40 mins study (sites blocked), 20 mins break (sites unblocked).
@@ -50,6 +59,10 @@ hs.loadSpoon("StudyMode")
 -- Standard durations
 spoon.StudyMode.studyDuration = 45 * 60 -- 45 minutes
 spoon.StudyMode.breakDuration = 15 * 60 -- 15 minutes
+
+-- Inactivity alarm settings
+spoon.StudyMode.inactivityTimeout = 60       -- 60 seconds idle threshold
+spoon.StudyMode.enableInactivityAlarm = true  -- Enable/disable idle alarm
 
 -- Hardcore mode durations
 spoon.StudyMode.hardcoreStudyDuration = 40 * 60 -- 40 minutes
