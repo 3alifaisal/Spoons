@@ -449,6 +449,7 @@ end
 
 --- StudyMode:activateHardcoreMode()
 --- Activates Hardcore Mode: 5 consecutive sessions (40m Study / 20m Break), non-removable.
+--- Overrides normal Study Mode if already running.
 function obj:activateHardcoreMode()
   if isHardcore then
     hs.alert.show(
@@ -457,6 +458,10 @@ function obj:activateHardcoreMode()
     )
     return
   end
+
+  -- Stop previous active tickers and override with Hardcore Mode!
+  stopTicker()
+  stopAlarmSound()
 
   isHardcore = true
   currentSession = 1
@@ -469,7 +474,7 @@ function obj:activateHardcoreMode()
   }):send()
 
   hs.alert.show(
-    "🔥 HARDCORE MODE ACTIVATED!\n5 Sessions: 40m Study / 20m Break\nCANNOT BE STOPPED MANUALLY.",
+    "🔥 HARDCORE MODE ACTIVATED!\nOverriding Study Mode!\n5 Sessions: 40m Study / 20m Break\nCANNOT BE STOPPED MANUALLY.",
     5
   )
 
@@ -552,44 +557,49 @@ end
 --- StudyMode:init()
 function obj:init()
   if not keyTapWatcher then
-    keyTapWatcher = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(event)
-      local flags = event:getFlags()
-      local isStudyShortcut = event:getKeyCode() == hs.keycodes.map.s
-        and flags.fn
-        and not flags.cmd
-        and not flags.alt
-        and not flags.ctrl
-        and not flags.shift
+    local isHoldingFnS = false
+    local holdTimer = nil
 
-      if not isStudyShortcut then return false end
+    keyTapWatcher = hs.eventtap.new(
+      { hs.eventtap.event.types.keyDown, hs.eventtap.event.types.keyUp },
+      function(event)
+        local flags = event:getFlags()
+        local isStudyKey = (event:getKeyCode() == hs.keycodes.map.s)
+        local isFnS = isStudyKey and flags.fn and not flags.cmd and not flags.alt and not flags.ctrl and not flags.shift
+        local eventType = event:getType()
 
-      local now = hs.timer.secondsSinceEpoch()
-      pressCount = pressCount + 1
-
-      if pressTimer then
-        pressTimer:stop()
-      end
-      pressTimer = hs.timer.doAfter(1.5, function()
-        pressCount = 0
-        pressTimer = nil
-      end)
-
-      if pressCount >= 3 then
-        pressCount = 0
-        if pressTimer then
-          pressTimer:stop()
-          pressTimer = nil
+        if eventType == hs.eventtap.event.types.keyUp and isStudyKey then
+          if isHoldingFnS then
+            isHoldingFnS = false
+            if holdTimer then
+              holdTimer:stop()
+              holdTimer = nil
+              hs.timer.doAfter(0, function() obj:toggle() end)
+            end
+            return true
+          end
+          return false
         end
-        hs.timer.doAfter(0, function() obj:activateHardcoreMode() end)
-      else
-        if now - lastHotkeyTime > 0.4 then
-          lastHotkeyTime = now
-          hs.timer.doAfter(0, function() obj:toggle() end)
-        end
-      end
 
-      return true
-    end)
+        if not isFnS then return false end
+
+        if eventType == hs.eventtap.event.types.keyDown then
+          if not isHoldingFnS then
+            isHoldingFnS = true
+            if holdTimer then holdTimer:stop() end
+
+            holdTimer = hs.timer.doAfter(3.0, function()
+              holdTimer = nil
+              isHoldingFnS = false
+              hs.timer.doAfter(0, function() obj:activateHardcoreMode() end)
+            end)
+          end
+          return true
+        end
+
+        return false
+      end
+    )
     keyTapWatcher:start()
   end
 
