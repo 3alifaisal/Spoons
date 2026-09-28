@@ -13,10 +13,10 @@
 
 ---
 
-### 2. ⚠️ Inactivity / Slacking Detection (1 Minute)
+### 2. ⚠️ Inactivity / Slacking Detection (3 Minutes)
 During a Study Session (in both Standard & Hardcore Mode):
-- **1-Minute Idle Threshold**: If no user input (mouse move, click, scrolling, key press) occurs for **60 seconds**, the **Crystals** alarm rings to wake you up!
-- **Alert Banner**: Displays `⚠️ INACTIVITY DETECTED! No input for 60s — back to studying!`.
+- **3-Minute Idle Threshold**: If no user input (mouse move, click, scrolling, key press) occurs for **3 minutes (180s)**, the **Crystals** alarm rings to wake you up!
+- **Alert Banner**: Displays `⚠️ INACTIVITY DETECTED! No input for 3 mins — back to studying!`.
 - **Instant Silence**: Simply moving your mouse, scrolling, or pressing any key immediately silences the alarm.
 - Disabled automatically during Break sessions.
 

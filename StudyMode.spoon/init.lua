@@ -24,7 +24,7 @@ obj.breakDuration = 15 * 60 -- 15 minutes normal break
 obj.hardcoreStudyDuration = 40 * 60 -- 40 minutes hardcore study
 obj.hardcoreBreakDuration = 20 * 60 -- 20 minutes hardcore break
 obj.hardcoreTotalSessions = 5       -- 5 consecutive sessions
-obj.inactivityTimeout = 60          -- 60 seconds (1 minute) inactivity threshold
+obj.inactivityTimeout = 3 * 60      -- 180 seconds (3 minutes) inactivity threshold
 obj.enableInactivityAlarm = true    -- Enable inactivity alarm during study sessions
 
 obj.helperPath = "/Library/HammerspoonStudyMode/study-mode-hosts"
@@ -309,7 +309,7 @@ local function updateLoop()
         if not isIdleRinging then
           isIdleRinging = true
           playCrystalsRing()
-          hs.alert.show("⚠️ INACTIVITY DETECTED!\nNo input for 60s — back to studying!", 4)
+          hs.alert.show("⚠️ INACTIVITY DETECTED!\nNo input for 3 mins — back to studying!", 4)
         end
       else
         if isIdleRinging then
