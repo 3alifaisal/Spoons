@@ -1,6 +1,6 @@
 # 🎯 StudyMode.spoon
 
-> An automated Pomodoro focus Spoon for Hammerspoon that cycles between Study sessions (blocking YouTube and Chess) and Break sessions (unblocking sites). Includes **🔥 Hardcore Mode** and **⚠️ Inactivity Detection**.
+> An automated Pomodoro focus Spoon for Hammerspoon that cycles between Study sessions (blocking YouTube and Chess) and Break sessions (unblocking sites). Includes **🔥 Hardcore Mode**, **⚠️ Inactivity Detection**, and **🇩🇪 Daily German Focus Mode**.
 
 ---
 
@@ -13,16 +13,30 @@
 
 ---
 
-### 2. ⚠️ Inactivity / Slacking Detection (3 Minutes)
-During a Study Session (in both Standard & Hardcore Mode):
+### 2. 🇩🇪 Daily German Focus Mode (Corner Panel)
+Starting every day (from tomorrow), the top-right corner panel sits showing: `[ 🇩🇪 GERMAN  START ]`.
+
+- 🖱️ **One-Click Start**: Click the panel to immediately switch to Study Mode.
+- ⏳ **No Timer / Untimed**: Websites (YouTube & Chess) are blocked with **no countdown timer**, allowing open-ended focus.
+- 🔒 **Console Stop Command Only**: It will not stop on its own or via normal hotkeys. To stop and unblock sites, run this command in the Hammerspoon console:
+  ```lua
+  StudyMode.German:stop()
+  ```
+  *(or `spoon.StudyMode.German:stop()` / `StudyMode:germanStop()`)*
+- ✅ **Once-a-day completion**: Stopping marks German study completed for the day and hides the panel until the next day.
+
+---
+
+### 3. ⚠️ Inactivity / Slacking Detection (3 Minutes)
+During a standard Study Session:
 - **3-Minute Idle Threshold**: If no user input (mouse move, click, scrolling, key press) occurs for **3 minutes (180s)**, the **Crystals** alarm rings to wake you up!
 - **Alert Banner**: Displays `⚠️ INACTIVITY DETECTED! No input for 3 mins — back to studying!`.
-- **Instant Silence**: Simply moving your mouse, scrolling, or pressing any key immediately silences the alarm.
+- **Instant Silence**: Moving your mouse, scrolling, or pressing any key immediately silences the alarm.
 - Disabled automatically during Break sessions.
 
 ---
 
-### 3. 🔥 Hardcore Mode (Hold `fn + S` for 3 Seconds)
+### 4. 🔥 Hardcore Mode (Hold `fn + S` for 3 Seconds)
 Triggered by **holding `fn + S` continuously for 3 seconds** (overrides standard Study Mode if already running):
 
 - ⏱️ **40-Minute Study / 20-Minute Break**: 40 mins study (sites blocked), 20 mins break (sites unblocked).
@@ -61,8 +75,8 @@ spoon.StudyMode.studyDuration = 45 * 60 -- 45 minutes
 spoon.StudyMode.breakDuration = 15 * 60 -- 15 minutes
 
 -- Inactivity alarm settings
-spoon.StudyMode.inactivityTimeout = 60       -- 60 seconds idle threshold
-spoon.StudyMode.enableInactivityAlarm = true  -- Enable/disable idle alarm
+spoon.StudyMode.inactivityTimeout = 3 * 60   -- 3 minutes idle threshold
+spoon.StudyMode.enableInactivityAlarm = true -- Enable/disable idle alarm
 
 -- Hardcore mode durations
 spoon.StudyMode.hardcoreStudyDuration = 40 * 60 -- 40 minutes

@@ -2,10 +2,14 @@
 ---
 --- Focus mode Spoon for Hammerspoon.
 --- Cycles between Study sessions (blocking sites) and Break sessions (unblocking sites).
---- Includes Hardcore Mode (activated by pressing fn+S 3 times rapidly):
+--- Includes Hardcore Mode (activated by holding fn+S for 3 seconds):
 ---   - 40 min Study / 20 min Break
 ---   - Cannot be stopped manually (Console/Hotkey stop requests are denied)
 ---   - Automatically ends only after 5 consecutive study sessions complete.
+--- Includes Daily German Focus Mode:
+---   - Sits in the top-right corner as a "GERMAN" panel every day starting from tomorrow.
+---   - Clicking it starts an untimed study session (sites blocked, no countdown timer).
+---   - Only stops when explicitly typed in console: StudyMode.German:stop()
 ---
 
 local obj = {}
@@ -13,7 +17,7 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "3.0"
+obj.version = "3.5"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -25,7 +29,12 @@ obj.hardcoreStudyDuration = 40 * 60 -- 40 minutes hardcore study
 obj.hardcoreBreakDuration = 20 * 60 -- 20 minutes hardcore break
 obj.hardcoreTotalSessions = 5       -- 5 consecutive sessions
 obj.inactivityTimeout = 3 * 60      -- 180 seconds (3 minutes) inactivity threshold
-obj.enableInactivityAlarm = true    -- Enable inactivity alarm during study sessions
+obj.enableInactivityAlarm = true    -- Enable inactivity alarm during standard study sessions
+
+-- German daily reminder configuration
+obj.germanStartDate = "2026-10-17" -- Starts tomorrow
+obj.settingsKeyGermanDoneDate = "hammerspoon.studyMode.germanDoneDate"
+obj.settingsKeyGermanStartTime = "hammerspoon.studyMode.germanStartTime"
 
 obj.helperPath = "/Library/HammerspoonStudyMode/study-mode-hosts"
 obj.settingsKeyDeadline = "hammerspoon.studyMode.deadline"
@@ -40,18 +49,18 @@ obj.soundFile = "/System/Library/PrivateFrameworks/ToneLibrary.framework/Version
 obj.defaultHotkey = { { "cmd", "alt", "ctrl" }, "S" }
 
 -- Internal state
-local mode = "INACTIVE" -- "STUDY", "BREAK", "ALARM", "INACTIVE"
+local mode = "INACTIVE" -- "STUDY", "BREAK", "ALARM", "GERMAN_PENDING", "GERMAN_STUDY", "INACTIVE"
 local isHardcore = false
 local currentSession = 1
 local deadline = nil
+local germanStartTime = nil
 local ticker = nil
 local alarmTimer = nil
+local germanCheckTimer = nil
 local overlay = nil
 local keyTapWatcher = nil
 local screenWatcher = nil
 local lastHotkeyTime = 0
-local pressCount = 0
-local pressTimer = nil
 local alarmSound = nil
 local isIdleRinging = false
 
@@ -89,6 +98,18 @@ end
 local function remainingSeconds()
   if not deadline then return 0 end
   return math.max(0, deadline - hs.timer.secondsSinceEpoch())
+end
+
+local function isGermanPending()
+  local today = os.date("%Y-%m-%d")
+  if today < obj.germanStartDate then
+    return false
+  end
+  local lastDone = hs.settings.get(obj.settingsKeyGermanDoneDate)
+  if lastDone == today then
+    return false
+  end
+  return (mode == "INACTIVE" or mode == "GERMAN_PENDING")
 end
 
 -- Execute hosts edit asynchronously/safely without blocking UI
@@ -159,8 +180,12 @@ local function positionOverlay()
   })
 end
 
--- Forward declaration
+-- Forward declarations
 local handleAlarmClick
+local startGermanStudy
+local stopGerman
+local checkGermanPrompt
+local updateOverlayUI
 
 local function ensureOverlay()
   if overlay then return end
@@ -184,16 +209,16 @@ local function ensureOverlay()
       center = { x = 18, y = 18 },
       radius = 4,
     },
-    -- 3. Label ("STUDY" / "BREAK" / "🔥 1/5")
+    -- 3. Label ("STUDY" / "BREAK" / "GERMAN" / "🔥 1/5")
     {
       type = "text",
       text = "STUDY",
       textColor = { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 },
       textSize = 11,
       textFont = ".SFNS-Medium",
-      frame = { x = 28, y = 10, w = 56, h = 18 },
+      frame = { x = 28, y = 10, w = 58, h = 18 },
     },
-    -- 4. Timer text ("40:00")
+    -- 4. Timer / Action text ("45:00" / "START")
     {
       type = "text",
       text = "45:00",
@@ -210,7 +235,15 @@ local function ensureOverlay()
   overlay:canvasMouseEvents(true)
   overlay:mouseCallback(function(canvas, event, id, x, y)
     if event == "mouseDown" then
-      if mode == "ALARM" then
+      if mode == "GERMAN_PENDING" then
+        startGermanStudy()
+      elseif mode == "GERMAN_STUDY" then
+        local elapsed = germanStartTime and math.max(0, hs.timer.secondsSinceEpoch() - germanStartTime) or 0
+        hs.alert.show(
+          string.format("🇩🇪 German Study active (%s elapsed)\nNo timer. Sites blocked.\nTo stop, run in console:\nStudyMode.German:stop()", formatRemaining(elapsed)),
+          4
+        )
+      elseif mode == "ALARM" then
         handleAlarmClick()
       elseif mode == "BREAK" then
         local tag = isHardcore and string.format("🔥 Hardcore Break (%d/5)", currentSession) or "Break"
@@ -240,11 +273,28 @@ local function stopTicker()
   end
 end
 
-local function updateOverlayUI()
+updateOverlayUI = function()
   ensureOverlay()
   if not overlay then return end
 
-  if mode == "STUDY" then
+  if mode == "GERMAN_PENDING" then
+    overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.75, blue = 0.20, alpha = 0.95 })
+    overlay:elementAttribute(2, "fillColor", { red = 0.95, green = 0.75, blue = 0.20, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "GERMAN")
+    overlay:elementAttribute(3, "textColor", { red = 0.95, green = 0.85, blue = 0.40, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", "START")
+    overlay:elementAttribute(4, "textColor", { red = 1.00, green = 1.00, blue = 1.00, alpha = 0.95 })
+
+  elseif mode == "GERMAN_STUDY" then
+    local elapsed = germanStartTime and math.max(0, hs.timer.secondsSinceEpoch() - germanStartTime) or 0
+    overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.75, blue = 0.20, alpha = 0.95 })
+    overlay:elementAttribute(2, "fillColor", { red = 0.95, green = 0.75, blue = 0.20, alpha = 1.0 })
+    overlay:elementAttribute(3, "text", "GERMAN")
+    overlay:elementAttribute(3, "textColor", { red = 0.95, green = 0.85, blue = 0.40, alpha = 1.0 })
+    overlay:elementAttribute(4, "text", formatRemaining(elapsed))
+    overlay:elementAttribute(4, "textColor", { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 })
+
+  elseif mode == "STUDY" then
     if isHardcore then
       overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.25, blue = 0.25, alpha = 0.95 })
       overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
@@ -257,6 +307,7 @@ local function updateOverlayUI()
       overlay:elementAttribute(3, "textColor", { red = 0.55, green = 0.65, blue = 0.60, alpha = 1.0 })
     end
     overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
+    overlay:elementAttribute(4, "textColor", { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 })
 
   elseif mode == "BREAK" then
     if isHardcore then
@@ -271,6 +322,7 @@ local function updateOverlayUI()
       overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
     end
     overlay:elementAttribute(4, "text", formatRemaining(remainingSeconds()))
+    overlay:elementAttribute(4, "textColor", { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 })
 
   elseif mode == "ALARM" then
     overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
@@ -282,6 +334,7 @@ local function updateOverlayUI()
     end
     overlay:elementAttribute(3, "textColor", { red = 1.00, green = 0.50, blue = 0.50, alpha = 1.0 })
     overlay:elementAttribute(4, "text", "STUDY")
+    overlay:elementAttribute(4, "textColor", { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 })
   end
 end
 
@@ -290,6 +343,22 @@ local function saveState()
   hs.settings.set(obj.settingsKeyDeadline, deadline)
   hs.settings.set(obj.settingsKeyHardcore, isHardcore)
   hs.settings.set(obj.settingsKeySessionCount, currentSession)
+  hs.settings.set(obj.settingsKeyGermanStartTime, germanStartTime)
+end
+
+checkGermanPrompt = function()
+  if mode == "INACTIVE" or mode == "GERMAN_PENDING" then
+    if isGermanPending() then
+      mode = "GERMAN_PENDING"
+      ensureOverlay()
+      updateOverlayUI()
+    else
+      if mode == "GERMAN_PENDING" then
+        mode = "INACTIVE"
+      end
+      hideOverlay()
+    end
+  end
 end
 
 -- Forward declarations of phase functions
@@ -298,11 +367,13 @@ local startAlarmPhase
 local startStudyPhase
 
 local function updateLoop()
-  if mode == "STUDY" or mode == "BREAK" then
+  if mode == "GERMAN_STUDY" then
+    updateOverlayUI()
+  elseif mode == "STUDY" or mode == "BREAK" then
     local seconds = remainingSeconds()
     updateOverlayUI()
 
-    -- Inactivity detection during STUDY phase (no mouse/key/scroll input for 60s)
+    -- Inactivity detection during normal STUDY phase (no mouse/key/scroll input for 3 mins)
     if mode == "STUDY" and obj.enableInactivityAlarm then
       local idleSecs = hs.host.idleTime()
       if idleSecs >= obj.inactivityTimeout then
@@ -332,6 +403,57 @@ local function updateLoop()
       end
     end
   end
+end
+
+startGermanStudy = function()
+  stopAlarmSound()
+  stopTicker()
+
+  mode = "GERMAN_STUDY"
+  germanStartTime = hs.timer.secondsSinceEpoch()
+  deadline = nil -- Untimed study session!
+  saveState()
+
+  ensureOverlay()
+  updateOverlayUI()
+
+  ticker = hs.timer.doEvery(1, updateLoop)
+
+  hs.timer.doAfter(0.01, function()
+    applyHostsBlock(true)
+  end)
+
+  hs.alert.show(
+    "🇩🇪 GERMAN STUDY ACTIVE\nSites blocked. No timer.\nTo stop, run in console:\nStudyMode.German:stop()",
+    5
+  )
+end
+
+stopGerman = function()
+  if mode ~= "GERMAN_STUDY" and mode ~= "GERMAN_PENDING" then
+    hs.alert.show("German Study is not active")
+    return
+  end
+
+  mode = "INACTIVE"
+  deadline = nil
+  germanStartTime = nil
+  stopTicker()
+  stopAlarmSound()
+
+  local today = os.date("%Y-%m-%d")
+  hs.settings.set(obj.settingsKeyGermanDoneDate, today)
+  hs.settings.set(obj.settingsKeyGermanStartTime, nil)
+  hs.settings.set(obj.settingsKeyMode, nil)
+  hs.settings.set(obj.settingsKeyDeadline, nil)
+
+  hideOverlay()
+
+  hs.timer.doAfter(0.01, function()
+    applyHostsBlock(false)
+  end)
+
+  hs.alert.show("🇩🇪 German Study session stopped!\nGreat work! Sites unblocked.", 4)
 end
 
 handleAlarmClick = function()
@@ -366,6 +488,7 @@ handleAlarmClick = function()
       }):send()
 
       hs.alert.show("🎉 HARDCORE MODE COMPLETE!\nAll 5 sessions finished on its own!", 5)
+      checkGermanPrompt()
     end
   else
     startStudyPhase()
@@ -417,10 +540,6 @@ startBreakPhase = function()
   hs.timer.doAfter(0.01, function()
     applyHostsBlock(false)
   end)
-
-  local titleMsg = isHardcore
-    and string.format("🔥 Hardcore Session %d/%d Study Complete! ☕", currentSession, obj.hardcoreTotalSessions)
-    ["45-Minute Study Session Complete! ☕"]
 
   local breakMsg = isHardcore
     and string.format("20-Minute Break started (Session %d/%d) ☕\nSites unblocked.", currentSession, obj.hardcoreTotalSessions)
@@ -508,7 +627,12 @@ end
 
 --- StudyMode:start()
 function obj:start()
-  if mode == "ALARM" then
+  if mode == "GERMAN_PENDING" then
+    startGermanStudy()
+  elseif mode == "GERMAN_STUDY" then
+    local elapsed = germanStartTime and math.max(0, hs.timer.secondsSinceEpoch() - germanStartTime) or 0
+    hs.alert.show(string.format("🇩🇪 German Study active (%s elapsed)\nStop with: StudyMode.German:stop()", formatRemaining(elapsed)))
+  elseif mode == "ALARM" then
     handleAlarmClick()
   elseif mode == "STUDY" then
     local tag = isHardcore and string.format("🔥 Hardcore Session %d/%d", currentSession, obj.hardcoreTotalSessions) or "Study Session"
@@ -522,7 +646,7 @@ function obj:start()
 end
 
 --- StudyMode:stop()
---- Emergency stop request. Blocked during Hardcore Mode!
+--- Normal stop request. Denied during Hardcore Mode and German Study!
 function obj:stop()
   if isHardcore then
     hs.alert.show(
@@ -533,7 +657,13 @@ function obj:stop()
     return false
   end
 
-  if mode == "INACTIVE" then
+  if mode == "GERMAN_STUDY" then
+    hs.alert.show("🇩🇪 GERMAN STUDY IS ACTIVE!\nTo stop, run in console:\nStudyMode.German:stop()", 4)
+    print("🇩🇪 German Study is active. Use StudyMode.German:stop() to stop.")
+    return false
+  end
+
+  if mode == "INACTIVE" and not isGermanPending() then
     hs.alert.show("Study Mode is not active")
     return
   end
@@ -542,7 +672,6 @@ function obj:stop()
   deadline = nil
   stopTicker()
   stopAlarmSound()
-  hideOverlay()
 
   hs.settings.set(obj.settingsKeyMode, nil)
   hs.settings.set(obj.settingsKeyDeadline, nil)
@@ -553,14 +682,18 @@ function obj:stop()
     applyHostsBlock(false)
   end)
 
+  checkGermanPrompt()
   hs.alert.show("Study Mode stopped")
 end
 
 --- StudyMode:toggle()
 function obj:toggle()
-  if mode == "ALARM" then
+  if mode == "GERMAN_STUDY" then
+    local elapsed = germanStartTime and math.max(0, hs.timer.secondsSinceEpoch() - germanStartTime) or 0
+    hs.alert.show(string.format("🇩🇪 German Study active (%s elapsed)\nStop with: StudyMode.German:stop()", formatRemaining(elapsed)))
+  elseif mode == "ALARM" then
     handleAlarmClick()
-  elseif mode == "INACTIVE" then
+  elseif mode == "INACTIVE" or mode == "GERMAN_PENDING" then
     startStudyPhase()
   else
     local tag = isHardcore and string.format("🔥 Hardcore %s (%d/%d)", mode, currentSession, obj.hardcoreTotalSessions) or mode
@@ -578,6 +711,65 @@ function obj:bindHotkeys(mapping)
   hs.spoons.bindHotkeysToSpec(spec, mapping)
   return self
 end
+
+-- =========================================================================
+-- German Study Mode API & Console Commands
+-- Supports:
+--   StudyMode.German:stop()
+--   StudyMode.German.stop()
+--   StudyMode:germanStop()
+--   StudyMode:GermanStop()
+--   StudyMode:stopGerman()
+-- =========================================================================
+
+obj.German = {}
+setmetatable(obj.German, {
+  __call = function(t, ...)
+    return t
+  end,
+  __index = function(t, k)
+    if k == "stop" then
+      return function(...) return stopGerman() end
+    elseif k == "start" then
+      return function(...) return startGermanStudy() end
+    elseif k == "reset" then
+      return function(...) return obj.German:reset() end
+    end
+  end
+})
+
+function obj.German:stop()
+  return stopGerman()
+end
+
+function obj.German:start()
+  return startGermanStudy()
+end
+
+function obj.German:reset()
+  hs.settings.set(obj.settingsKeyGermanDoneDate, nil)
+  checkGermanPrompt()
+  hs.alert.show("🇩🇪 German daily completion reset!", 3)
+end
+
+function obj.German:enableToday()
+  obj.germanStartDate = os.date("%Y-%m-%d")
+  hs.settings.set(obj.settingsKeyGermanDoneDate, nil)
+  checkGermanPrompt()
+  hs.alert.show("🇩🇪 German panel enabled for today!", 3)
+end
+
+function obj:startGerman()
+  startGermanStudy()
+end
+
+function obj:stopGerman()
+  stopGerman()
+end
+
+obj.germanStop = function(self) return stopGerman() end
+obj.germanStart = function(self) return startGermanStudy() end
+obj.GermanStop = function(self) return stopGerman() end
 
 --- StudyMode:init()
 function obj:init()
@@ -637,18 +829,33 @@ function obj:init()
     screenWatcher:start()
   end
 
+  -- Periodic check for German pending panel (every 60s & on date transition)
+  if germanCheckTimer then
+    germanCheckTimer:stop()
+  end
+  germanCheckTimer = hs.timer.doEvery(60, checkGermanPrompt)
+
   -- Recovery on config reload / restart
   local savedMode = hs.settings.get(obj.settingsKeyMode)
   local savedDeadline = hs.settings.get(obj.settingsKeyDeadline)
   local savedHardcore = hs.settings.get(obj.settingsKeyHardcore)
   local savedCount = hs.settings.get(obj.settingsKeySessionCount)
+  local savedGermanStart = hs.settings.get(obj.settingsKeyGermanStartTime)
 
   if savedHardcore == true then
     isHardcore = true
     currentSession = type(savedCount) == "number" and savedCount or 1
   end
 
-  if savedMode == "STUDY" and type(savedDeadline) == "number" then
+  if savedMode == "GERMAN_STUDY" then
+    mode = "GERMAN_STUDY"
+    germanStartTime = savedGermanStart or hs.timer.secondsSinceEpoch()
+    ensureOverlay()
+    updateOverlayUI()
+    stopTicker()
+    ticker = hs.timer.doEvery(1, updateLoop)
+    hs.timer.doAfter(0.01, function() applyHostsBlock(true) end)
+  elseif savedMode == "STUDY" and type(savedDeadline) == "number" then
     if savedDeadline > hs.timer.secondsSinceEpoch() then
       mode = "STUDY"
       deadline = savedDeadline
@@ -674,6 +881,9 @@ function obj:init()
     end
   elseif savedMode == "ALARM" then
     startAlarmPhase()
+  else
+    -- INACTIVE state: check if German pending panel should sit in the corner
+    checkGermanPrompt()
   end
 
   return self
