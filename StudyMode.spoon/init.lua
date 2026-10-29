@@ -2,12 +2,15 @@
 ---
 --- Focus mode Spoon for Hammerspoon.
 --- Cycles between Study sessions (blocking sites) and Break sessions (unblocking sites).
+--- Includes Daily 16:00 Study Session:
+---   - Starts automatically every day at 16:00.
+---   - 45m Study 1/2 -> 15m Break -> 45m Study 2/2 -> Finished (no second break).
 --- Includes Hardcore Mode (activated by holding fn+S for 3 seconds):
----   - 40 min Study / 20 min Break
+---   - 40 min Study / 10 min Break
 ---   - Cannot be stopped manually (Console/Hotkey stop requests are denied)
 ---   - Automatically ends only after 5 consecutive study sessions complete.
 --- Includes Daily German Focus Mode:
----   - Sits in the top-right corner as a "GERMAN" panel every day starting from tomorrow.
+---   - Sits in the top-right corner as a "GERMAN" panel every day.
 ---   - Clicking it starts an untimed study session (sites blocked, no countdown timer).
 ---   - Only stops when explicitly typed in console: StudyMode.German:stop()
 ---
@@ -17,22 +20,30 @@ obj.__index = obj
 
 -- Metadata
 obj.name = "StudyMode"
-obj.version = "3.5"
+obj.version = "3.6"
 obj.author = "Ali Faisal Awada"
 obj.homepage = "https://github.com/3alifaisal/Spoons"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
 
 -- Configuration
-obj.studyDuration = 45 * 60 -- 45 minutes normal study
-obj.breakDuration = 15 * 60 -- 15 minutes normal break
+obj.studyDuration = 45 * 60         -- 45 minutes normal study
+obj.breakDuration = 15 * 60         -- 15 minutes normal break
 obj.hardcoreStudyDuration = 40 * 60 -- 40 minutes hardcore study
-obj.hardcoreBreakDuration = 20 * 60 -- 20 minutes hardcore break
+obj.hardcoreBreakDuration = 10 * 60 -- 10 minutes hardcore break (reduced from 20m)
 obj.hardcoreTotalSessions = 5       -- 5 consecutive sessions
 obj.inactivityTimeout = 3 * 60      -- 180 seconds (3 minutes) inactivity threshold
 obj.enableInactivityAlarm = true    -- Enable inactivity alarm during standard study sessions
 
+-- Daily 16:00 Study Session Configuration
+obj.daily16Time = "16:00"           -- 16:00 daily
+obj.enableDaily16 = true            -- Enable daily 16:00 session
+obj.daily16StudyDuration = 45 * 60  -- 45 minutes
+obj.daily16BreakDuration = 15 * 60  -- 15 minutes
+obj.settingsKeyDaily16Session = "hammerspoon.studyMode.daily16Session"
+obj.settingsKeyDaily16Step = "hammerspoon.studyMode.daily16Step"
+
 -- German daily reminder configuration
-obj.germanStartDate = "2026-10-17" -- Starts tomorrow
+obj.germanStartDate = "2026-10-17"
 obj.settingsKeyGermanDoneDate = "hammerspoon.studyMode.germanDoneDate"
 obj.settingsKeyGermanStartTime = "hammerspoon.studyMode.germanStartTime"
 
@@ -52,11 +63,14 @@ obj.defaultHotkey = { { "cmd", "alt", "ctrl" }, "S" }
 local mode = "INACTIVE" -- "STUDY", "BREAK", "ALARM", "GERMAN_PENDING", "GERMAN_STUDY", "INACTIVE"
 local isHardcore = false
 local currentSession = 1
+local isDaily16Session = false
+local daily16Step = 0 -- 1 = Study 1, 2 = Break, 3 = Study 2
 local deadline = nil
 local germanStartTime = nil
 local ticker = nil
 local alarmTimer = nil
 local germanCheckTimer = nil
+local daily16Timer = nil
 local overlay = nil
 local keyTapWatcher = nil
 local screenWatcher = nil
@@ -209,7 +223,7 @@ local function ensureOverlay()
       center = { x = 18, y = 18 },
       radius = 4,
     },
-    -- 3. Label ("STUDY" / "BREAK" / "GERMAN" / "🔥 1/5")
+    -- 3. Label ("STUDY" / "BREAK" / "GERMAN" / "🔥 1/5" / "📚 1/2")
     {
       type = "text",
       text = "STUDY",
@@ -246,11 +260,20 @@ local function ensureOverlay()
       elseif mode == "ALARM" then
         handleAlarmClick()
       elseif mode == "BREAK" then
-        local tag = isHardcore and string.format("🔥 Hardcore Break (%d/5)", currentSession) or "Break"
-        hs.alert.show(tag .. " active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        if isDaily16Session then
+          hs.alert.show(string.format("☕ 16:00 Break active (%s left)\nStudy Session 2/2 will follow.", formatRemaining(remainingSeconds())))
+        else
+          local tag = isHardcore and string.format("🔥 Hardcore Break (%d/5)", currentSession) or "Break"
+          hs.alert.show(tag .. " active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        end
       elseif mode == "STUDY" then
-        local tag = isHardcore and string.format("🔥 Hardcore Study (%d/5)", currentSession) or "Study"
-        hs.alert.show(tag .. " active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        if isDaily16Session then
+          local stepNum = (daily16Step == 3 and 2 or 1)
+          hs.alert.show(string.format("📚 16:00 Study (%d/2) active (%s left)", stepNum, formatRemaining(remainingSeconds())))
+        else
+          local tag = isHardcore and string.format("🔥 Hardcore Study (%d/5)", currentSession) or "Study"
+          hs.alert.show(tag .. " active (" .. formatRemaining(remainingSeconds()) .. " left)")
+        end
       end
     end
   end)
@@ -295,7 +318,12 @@ updateOverlayUI = function()
     overlay:elementAttribute(4, "textColor", { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 })
 
   elseif mode == "STUDY" then
-    if isHardcore then
+    if isDaily16Session then
+      overlay:elementAttribute(1, "strokeColor", { red = 0.20, green = 0.70, blue = 0.95, alpha = 0.90 })
+      overlay:elementAttribute(2, "fillColor", { red = 0.30, green = 0.80, blue = 1.00, alpha = 1.0 })
+      overlay:elementAttribute(3, "text", string.format("📚 %d/2", daily16Step == 3 and 2 or 1))
+      overlay:elementAttribute(3, "textColor", { red = 0.40, green = 0.85, blue = 1.00, alpha = 1.0 })
+    elseif isHardcore then
       overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.25, blue = 0.25, alpha = 0.95 })
       overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
       overlay:elementAttribute(3, "text", string.format("🔥 %d/%d", currentSession, obj.hardcoreTotalSessions))
@@ -310,7 +338,12 @@ updateOverlayUI = function()
     overlay:elementAttribute(4, "textColor", { red = 0.92, green = 0.98, blue = 0.94, alpha = 1.0 })
 
   elseif mode == "BREAK" then
-    if isHardcore then
+    if isDaily16Session then
+      overlay:elementAttribute(1, "strokeColor", { red = 0.95, green = 0.65, blue = 0.20, alpha = 0.90 })
+      overlay:elementAttribute(2, "fillColor", { red = 0.98, green = 0.70, blue = 0.25, alpha = 1.0 })
+      overlay:elementAttribute(3, "text", "☕ 1/2")
+      overlay:elementAttribute(3, "textColor", { red = 0.90, green = 0.75, blue = 0.50, alpha = 1.0 })
+    elseif isHardcore then
       overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.55, blue = 0.20, alpha = 0.95 })
       overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.60, blue = 0.25, alpha = 1.0 })
       overlay:elementAttribute(3, "text", string.format("☕ %d/%d", currentSession, obj.hardcoreTotalSessions))
@@ -327,7 +360,9 @@ updateOverlayUI = function()
   elseif mode == "ALARM" then
     overlay:elementAttribute(1, "strokeColor", { red = 1.00, green = 0.30, blue = 0.30, alpha = 1.0 })
     overlay:elementAttribute(2, "fillColor", { red = 1.00, green = 0.35, blue = 0.35, alpha = 1.0 })
-    if isHardcore then
+    if isDaily16Session then
+      overlay:elementAttribute(3, "text", "🔔 2/2")
+    elseif isHardcore then
       overlay:elementAttribute(3, "text", string.format("🔔 %d/%d", currentSession, obj.hardcoreTotalSessions))
     else
       overlay:elementAttribute(3, "text", "🔔 START")
@@ -344,6 +379,8 @@ local function saveState()
   hs.settings.set(obj.settingsKeyHardcore, isHardcore)
   hs.settings.set(obj.settingsKeySessionCount, currentSession)
   hs.settings.set(obj.settingsKeyGermanStartTime, germanStartTime)
+  hs.settings.set(obj.settingsKeyDaily16Session, isDaily16Session)
+  hs.settings.set(obj.settingsKeyDaily16Step, daily16Step)
 end
 
 checkGermanPrompt = function()
@@ -397,7 +434,35 @@ local function updateLoop()
       end
 
       if mode == "STUDY" then
-        startBreakPhase()
+        if isDaily16Session and daily16Step == 3 then
+          -- Second 45-minute study session completed! No second break. Stops cleanly.
+          isDaily16Session = false
+          daily16Step = 0
+          mode = "INACTIVE"
+          deadline = nil
+          stopTicker()
+          stopAlarmSound()
+          saveState()
+
+          hs.timer.doAfter(0.01, function()
+            applyHostsBlock(false)
+          end)
+
+          hs.notify.new({
+            title = "🎉 16:00 Study Session Complete! 🏆",
+            informativeText = "Both 45-minute study sessions finished! No second break needed. Great work!",
+            soundName = "Glass",
+          }):send()
+
+          hs.alert.show("🎉 16:00 STUDY SESSION COMPLETE!\nBoth 45-min sessions finished. Sites unblocked.", 5)
+          checkGermanPrompt()
+        else
+          if isDaily16Session and daily16Step == 1 then
+            daily16Step = 2
+            saveState()
+          end
+          startBreakPhase()
+        end
       elseif mode == "BREAK" then
         startAlarmPhase()
       end
@@ -483,13 +548,18 @@ handleAlarmClick = function()
 
       hs.notify.new({
         title = "🎉 HARDCORE MODE COMPLETE! 🏆",
-        informativeText = "5 consecutive 40-minute study sessions finished on its own! Incredible job!",
+        informativeText = "5 consecutive study sessions finished on its own! Incredible job!",
         soundName = "Glass",
       }):send()
 
       hs.alert.show("🎉 HARDCORE MODE COMPLETE!\nAll 5 sessions finished on its own!", 5)
       checkGermanPrompt()
     end
+  elseif isDaily16Session and daily16Step == 2 then
+    -- Transitioning from Break to Study 2/2
+    daily16Step = 3
+    saveState()
+    startStudyPhase()
   else
     startStudyPhase()
   end
@@ -513,9 +583,14 @@ startAlarmPhase = function()
     end
   end)
 
-  local infoText = isHardcore
-    and string.format("Hardcore Session %d/%d break over! Click timer or press fn+S to start next session.", currentSession, obj.hardcoreTotalSessions)
-    or "Click the top-right timer or press fn+S to start your next 45-minute study session."
+  local infoText
+  if isDaily16Session then
+    infoText = "Break over! Click timer or press fn+S to start Study Session 2/2."
+  elseif isHardcore then
+    infoText = string.format("Hardcore Session %d/%d break over! Click timer or press fn+S to start next session.", currentSession, obj.hardcoreTotalSessions)
+  else
+    infoText = "Click the top-right timer or press fn+S to start your next 45-minute study session."
+  end
 
   hs.notify.new({
     title = "Break is over! 🔔",
@@ -526,7 +601,15 @@ end
 
 startBreakPhase = function()
   mode = "BREAK"
-  local breakDur = isHardcore and obj.hardcoreBreakDuration or obj.breakDuration
+  local breakDur
+  if isDaily16Session then
+    breakDur = obj.daily16BreakDuration
+  elseif isHardcore then
+    breakDur = obj.hardcoreBreakDuration
+  else
+    breakDur = obj.breakDuration
+  end
+
   deadline = hs.timer.secondsSinceEpoch() + breakDur
   stopAlarmSound()
   saveState()
@@ -541,13 +624,28 @@ startBreakPhase = function()
     applyHostsBlock(false)
   end)
 
-  local breakMsg = isHardcore
-    and string.format("20-Minute Break started (Session %d/%d) ☕\nSites unblocked.", currentSession, obj.hardcoreTotalSessions)
-    or "15-Minute Break started ☕\nSites unblocked."
+  local breakMinutes = math.floor(breakDur / 60)
+  local breakMsg
+  local notifyTitle
+  local notifyText
+
+  if isDaily16Session then
+    breakMsg = string.format("%d-Minute Break started ☕\nSites unblocked. Study 2/2 will follow.", breakMinutes)
+    notifyTitle = "45-Minute Study Session 1/2 Complete! ☕"
+    notifyText = string.format("%d-minute break started. YouTube & Chess are available.", breakMinutes)
+  elseif isHardcore then
+    breakMsg = string.format("%d-Minute Break started (Session %d/%d) ☕\nSites unblocked.", breakMinutes, currentSession, obj.hardcoreTotalSessions)
+    notifyTitle = string.format("🔥 Hardcore Session %d/%d Complete! ☕", currentSession, obj.hardcoreTotalSessions)
+    notifyText = string.format("%d-minute break started. YouTube & Chess are available.", breakMinutes)
+  else
+    breakMsg = string.format("%d-Minute Break started ☕\nSites unblocked.", breakMinutes)
+    notifyTitle = "45-Minute Study Session Complete! ☕"
+    notifyText = string.format("%d-minute break started. YouTube & Chess are available.", breakMinutes)
+  end
 
   hs.notify.new({
-    title = isHardcore and string.format("🔥 Hardcore Session %d/%d Complete! ☕", currentSession, obj.hardcoreTotalSessions) or "45-Minute Study Session Complete! ☕",
-    informativeText = isHardcore and "20-minute break started. YouTube & Chess are available." or "15-minute break started. YouTube & Chess are available.",
+    title = notifyTitle,
+    informativeText = notifyText,
     soundName = "Glass",
   }):send()
 
@@ -558,7 +656,15 @@ startStudyPhase = function()
   stopAlarmSound()
 
   mode = "STUDY"
-  local studyDur = isHardcore and obj.hardcoreStudyDuration or obj.studyDuration
+  local studyDur
+  if isDaily16Session then
+    studyDur = obj.daily16StudyDuration
+  elseif isHardcore then
+    studyDur = obj.hardcoreStudyDuration
+  else
+    studyDur = obj.studyDuration
+  end
+
   deadline = hs.timer.secondsSinceEpoch() + studyDur
   saveState()
 
@@ -572,9 +678,17 @@ startStudyPhase = function()
     applyHostsBlock(true)
   end)
 
-  local alertMsg = isHardcore
-    and string.format("🔥 HARDCORE MODE: Session %d/%d (%d:00)\nYouTube & Chess blocked.", currentSession, obj.hardcoreTotalSessions, math.floor(studyDur / 60))
-    or string.format("Study Session active (%d:00)\nYouTube & Chess blocked.", math.floor(studyDur / 60))
+  local studyMinutes = math.floor(studyDur / 60)
+  local alertMsg
+
+  if isDaily16Session then
+    local stepNum = (daily16Step == 3 and 2 or 1)
+    alertMsg = string.format("📚 16:00 Study Session (%d/2) (%d:00)\nYouTube & Chess blocked.", stepNum, studyMinutes)
+  elseif isHardcore then
+    alertMsg = string.format("🔥 HARDCORE MODE: Session %d/%d (%d:00)\nYouTube & Chess blocked.", currentSession, obj.hardcoreTotalSessions, studyMinutes)
+  else
+    alertMsg = string.format("Study Session active (%d:00)\nYouTube & Chess blocked.", studyMinutes)
+  end
 
   hs.alert.show(alertMsg, 3)
 end
@@ -591,8 +705,36 @@ function obj:startAlarmPhase()
   startAlarmPhase()
 end
 
+--- StudyMode:startDaily16Session()
+--- Starts the 16:00 two-phase study session (45m study -> 15m break -> 45m study -> stop).
+function obj:startDaily16Session()
+  if isHardcore then
+    hs.alert.show("🔥 Hardcore Mode is active. Complete it first!", 4)
+    return
+  end
+  if mode == "GERMAN_STUDY" then
+    hs.alert.show("🇩🇪 German Study is active. Stop it first via StudyMode.German:stop()", 4)
+    return
+  end
+
+  stopTicker()
+  stopAlarmSound()
+
+  isDaily16Session = true
+  daily16Step = 1
+  saveState()
+
+  hs.notify.new({
+    title = "📚 16:00 Study Session Started! 🎯",
+    informativeText = "45m Study (1/2) -> 15m Break -> 45m Study (2/2). No second break.",
+    soundName = "Hero",
+  }):send()
+
+  startStudyPhase()
+end
+
 --- StudyMode:activateHardcoreMode()
---- Activates Hardcore Mode: 5 consecutive sessions (40m Study / 20m Break), non-removable.
+--- Activates Hardcore Mode: 5 consecutive sessions (40m Study / 10m Break), non-removable.
 --- Overrides normal Study Mode if already running.
 function obj:activateHardcoreMode()
   if isHardcore then
@@ -607,18 +749,20 @@ function obj:activateHardcoreMode()
   stopTicker()
   stopAlarmSound()
 
+  isDaily16Session = false
+  daily16Step = 0
   isHardcore = true
   currentSession = 1
   saveState()
 
   hs.notify.new({
     title = "🔥 HARDCORE MODE ACTIVATED!",
-    informativeText = "5 consecutive sessions (40m Study / 20m Break).\nCANNOT be stopped manually!",
+    informativeText = string.format("5 consecutive sessions (%dm Study / %dm Break).\nCANNOT be stopped manually!", math.floor(obj.hardcoreStudyDuration / 60), math.floor(obj.hardcoreBreakDuration / 60)),
     soundName = "Hero",
   }):send()
 
   hs.alert.show(
-    "🔥 HARDCORE MODE ACTIVATED!\nOverriding Study Mode!\n5 Sessions: 40m Study / 20m Break\nCANNOT BE STOPPED MANUALLY.",
+    string.format("🔥 HARDCORE MODE ACTIVATED!\nOverriding Study Mode!\n5 Sessions: %dm Study / %dm Break\nCANNOT BE STOPPED MANUALLY.", math.floor(obj.hardcoreStudyDuration / 60), math.floor(obj.hardcoreBreakDuration / 60)),
     5
   )
 
@@ -635,11 +779,20 @@ function obj:start()
   elseif mode == "ALARM" then
     handleAlarmClick()
   elseif mode == "STUDY" then
-    local tag = isHardcore and string.format("🔥 Hardcore Session %d/%d", currentSession, obj.hardcoreTotalSessions) or "Study Session"
-    hs.alert.show(tag .. " active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+    if isDaily16Session then
+      local stepNum = (daily16Step == 3 and 2 or 1)
+      hs.alert.show(string.format("📚 16:00 Study (%d/2) active: %s remaining", stepNum, formatRemaining(remainingSeconds())))
+    else
+      local tag = isHardcore and string.format("🔥 Hardcore Session %d/%d", currentSession, obj.hardcoreTotalSessions) or "Study Session"
+      hs.alert.show(tag .. " active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+    end
   elseif mode == "BREAK" then
-    local tag = isHardcore and string.format("🔥 Hardcore Break %d/%d", currentSession, obj.hardcoreTotalSessions) or "Break"
-    hs.alert.show(tag .. " active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+    if isDaily16Session then
+      hs.alert.show(string.format("☕ 16:00 Break active: %s remaining", formatRemaining(remainingSeconds())))
+    else
+      local tag = isHardcore and string.format("🔥 Hardcore Break %d/%d", currentSession, obj.hardcoreTotalSessions) or "Break"
+      hs.alert.show(tag .. " active: " .. formatRemaining(remainingSeconds()) .. " remaining")
+    end
   else
     startStudyPhase()
   end
@@ -670,6 +823,8 @@ function obj:stop()
 
   mode = "INACTIVE"
   deadline = nil
+  isDaily16Session = false
+  daily16Step = 0
   stopTicker()
   stopAlarmSound()
 
@@ -677,6 +832,8 @@ function obj:stop()
   hs.settings.set(obj.settingsKeyDeadline, nil)
   hs.settings.set(obj.settingsKeyHardcore, nil)
   hs.settings.set(obj.settingsKeySessionCount, nil)
+  hs.settings.set(obj.settingsKeyDaily16Session, nil)
+  hs.settings.set(obj.settingsKeyDaily16Step, nil)
 
   hs.timer.doAfter(0.01, function()
     applyHostsBlock(false)
@@ -696,7 +853,15 @@ function obj:toggle()
   elseif mode == "INACTIVE" or mode == "GERMAN_PENDING" then
     startStudyPhase()
   else
-    local tag = isHardcore and string.format("🔥 Hardcore %s (%d/%d)", mode, currentSession, obj.hardcoreTotalSessions) or mode
+    local tag
+    if isDaily16Session then
+      local stepNum = (daily16Step == 3 and 2 or 1)
+      tag = string.format("📚 16:00 %s (%d/2)", mode, stepNum)
+    elseif isHardcore then
+      tag = string.format("🔥 Hardcore %s (%d/%d)", mode, currentSession, obj.hardcoreTotalSessions)
+    else
+      tag = mode
+    end
     hs.alert.show(string.format("%s active: %s left", tag, formatRemaining(remainingSeconds())))
   end
 end
@@ -835,16 +1000,42 @@ function obj:init()
   end
   germanCheckTimer = hs.timer.doEvery(60, checkGermanPrompt)
 
+  -- Daily 16:00 Study Session Timer
+  if daily16Timer then
+    daily16Timer:stop()
+    daily16Timer = nil
+  end
+  if obj.enableDaily16 then
+    daily16Timer = hs.timer.doAt(obj.daily16Time, "1d", function()
+      if mode == "INACTIVE" or mode == "GERMAN_PENDING" then
+        obj:startDaily16Session()
+      else
+        hs.notify.new({
+          title = "📚 16:00 Study Reminder",
+          informativeText = string.format("It is 16:00! Currently in %s mode. Finish or stop to start the 16:00 session.", mode),
+          soundName = "Glass",
+        }):send()
+      end
+    end)
+  end
+
   -- Recovery on config reload / restart
   local savedMode = hs.settings.get(obj.settingsKeyMode)
   local savedDeadline = hs.settings.get(obj.settingsKeyDeadline)
   local savedHardcore = hs.settings.get(obj.settingsKeyHardcore)
   local savedCount = hs.settings.get(obj.settingsKeySessionCount)
   local savedGermanStart = hs.settings.get(obj.settingsKeyGermanStartTime)
+  local savedDaily16 = hs.settings.get(obj.settingsKeyDaily16Session)
+  local savedDaily16Step = hs.settings.get(obj.settingsKeyDaily16Step)
 
   if savedHardcore == true then
     isHardcore = true
     currentSession = type(savedCount) == "number" and savedCount or 1
+  end
+
+  if savedDaily16 == true then
+    isDaily16Session = true
+    daily16Step = type(savedDaily16Step) == "number" and savedDaily16Step or 1
   end
 
   if savedMode == "GERMAN_STUDY" then
