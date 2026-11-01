@@ -41,6 +41,7 @@ obj.daily16StudyDuration = 45 * 60  -- 45 minutes
 obj.daily16BreakDuration = 15 * 60  -- 15 minutes
 obj.settingsKeyDaily16Session = "hammerspoon.studyMode.daily16Session"
 obj.settingsKeyDaily16Step = "hammerspoon.studyMode.daily16Step"
+obj.settingsKeyDaily16LastRunDate = "hammerspoon.studyMode.daily16LastRunDate"
 
 -- German daily reminder configuration
 obj.germanStartDate = "2026-10-17"
@@ -69,8 +70,8 @@ local deadline = nil
 local germanStartTime = nil
 local ticker = nil
 local alarmTimer = nil
-local germanCheckTimer = nil
-local daily16Timer = nil
+local scheduleCheckTimer = nil
+local sleepWakeWatcher = nil
 local overlay = nil
 local keyTapWatcher = nil
 local screenWatcher = nil
@@ -131,8 +132,8 @@ local function applyHostsBlock(enable)
   pcall(function()
     if hs.fs.attributes(obj.helperPath) then
       local cmd = enable and "on" or "off"
-      local output, status, type, rc = hs.execute(string.format("sudo -n %s %s", obj.helperPath, cmd))
-      if rc == 0 then return end
+      local output, status, type, rc = hs.execute(string.format("/usr/bin/sudo -n %s %s", obj.helperPath, cmd), true)
+      if status == true or rc == 0 then return end
     end
 
     local shScript
@@ -199,6 +200,7 @@ local handleAlarmClick
 local startGermanStudy
 local stopGerman
 local checkGermanPrompt
+local checkDaily16Schedule
 local updateOverlayUI
 
 local function ensureOverlay()
@@ -394,6 +396,47 @@ checkGermanPrompt = function()
         mode = "INACTIVE"
       end
       hideOverlay()
+    end
+  end
+end
+
+checkDaily16Schedule = function()
+  if not obj.enableDaily16 then return end
+  local now = os.date("*t")
+  local today = string.format("%04d-%02d-%02d", now.year, now.month, now.day)
+  local lastRunDate = hs.settings.get(obj.settingsKeyDaily16LastRunDate)
+
+  if lastRunDate == today then return end
+
+  local targetHour, targetMin = obj.daily16Time:match("^(%d+):(%d+)$")
+  targetHour = tonumber(targetHour) or 16
+  targetMin = tonumber(targetMin) or 0
+
+  -- Only trigger if within the target window (16:00 to 16:05)
+  if now.hour == targetHour and now.min >= targetMin and now.min <= (targetMin + 5) then
+    hs.settings.set(obj.settingsKeyDaily16LastRunDate, today)
+    if mode == "INACTIVE" or mode == "GERMAN_PENDING" then
+      obj:startDaily16Session()
+    elseif mode == "GERMAN_STUDY" then
+      -- User is currently studying German; do not interrupt and do not trigger late!
+      hs.notify.new({
+        title = "📚 16:00 Study Block",
+        informativeText = "It is 16:00, but German study is currently active. 16:00 session will not interrupt.",
+        soundName = "Glass",
+      }):send()
+    else
+      hs.notify.new({
+        title = "📚 16:00 Study Reminder",
+        informativeText = string.format("It is 16:00! Currently in %s mode. Finish or stop to start the 16:00 session.", mode),
+        soundName = "Glass",
+      }):send()
+    end
+  elseif now.hour > targetHour or (now.hour == targetHour and now.min > (targetMin + 5)) then
+    -- Current time is past the target window (e.g. 23:00 after waking up).
+    -- Mark today so it NEVER triggers late at 23:00!
+    if lastRunDate ~= today then
+      hs.settings.set(obj.settingsKeyDaily16LastRunDate, today)
+      print(string.format("[StudyMode] 16:00 window passed for today (current time %02d:%02d). Skipping.", now.hour, now.min))
     end
   end
 end
@@ -799,9 +842,15 @@ function obj:start()
 end
 
 --- StudyMode:stop()
---- Normal stop request. Denied during Hardcore Mode and German Study!
-function obj:stop()
-  if isHardcore then
+--- Normal stop request. Denied during Hardcore Mode and German Study (unless force is true).
+function obj.stop(...)
+  local args = { ... }
+  local force = false
+  for _, a in ipairs(args) do
+    if a == true then force = true end
+  end
+
+  if isHardcore and not force then
     hs.alert.show(
       string.format("🔥 HARDCORE MODE IS ACTIVE (%d/%d)\nCannot be stopped until 5 sessions complete!", currentSession, obj.hardcoreTotalSessions),
       5
@@ -810,13 +859,13 @@ function obj:stop()
     return false
   end
 
-  if mode == "GERMAN_STUDY" then
+  if mode == "GERMAN_STUDY" and not force then
     hs.alert.show("🇩🇪 GERMAN STUDY IS ACTIVE!\nTo stop, run in console:\nStudyMode.German:stop()", 4)
     print("🇩🇪 German Study is active. Use StudyMode.German:stop() to stop.")
     return false
   end
 
-  if mode == "INACTIVE" and not isGermanPending() then
+  if mode == "INACTIVE" and not isGermanPending() and not force then
     hs.alert.show("Study Mode is not active")
     return
   end
@@ -825,6 +874,10 @@ function obj:stop()
   deadline = nil
   isDaily16Session = false
   daily16Step = 0
+  if force then
+    isHardcore = false
+    germanStartTime = nil
+  end
   stopTicker()
   stopAlarmSound()
 
@@ -834,6 +887,9 @@ function obj:stop()
   hs.settings.set(obj.settingsKeySessionCount, nil)
   hs.settings.set(obj.settingsKeyDaily16Session, nil)
   hs.settings.set(obj.settingsKeyDaily16Step, nil)
+  if force then
+    hs.settings.set(obj.settingsKeyGermanStartTime, nil)
+  end
 
   hs.timer.doAfter(0.01, function()
     applyHostsBlock(false)
@@ -841,6 +897,7 @@ function obj:stop()
 
   checkGermanPrompt()
   hs.alert.show("Study Mode stopped")
+  return true
 end
 
 --- StudyMode:toggle()
@@ -994,30 +1051,31 @@ function obj:init()
     screenWatcher:start()
   end
 
-  -- Periodic check for German pending panel (every 60s & on date transition)
-  if germanCheckTimer then
-    germanCheckTimer:stop()
+  -- Sleep / Wake watcher to handle schedule accurately across Mac sleeps
+  if sleepWakeWatcher then
+    sleepWakeWatcher:stop()
+    sleepWakeWatcher = nil
   end
-  germanCheckTimer = hs.timer.doEvery(60, checkGermanPrompt)
+  sleepWakeWatcher = hs.caffeinate.watcher.new(function(event)
+    if event == hs.caffeinate.watcher.systemDidWake or event == hs.caffeinate.watcher.screensDidUnlock then
+      checkDaily16Schedule()
+      checkGermanPrompt()
+    end
+  end)
+  sleepWakeWatcher:start()
 
-  -- Daily 16:00 Study Session Timer
-  if daily16Timer then
-    daily16Timer:stop()
-    daily16Timer = nil
+  -- Periodic check (every 20s) for German panel and 16:00 schedule
+  if scheduleCheckTimer then
+    scheduleCheckTimer:stop()
+    scheduleCheckTimer = nil
   end
-  if obj.enableDaily16 then
-    daily16Timer = hs.timer.doAt(obj.daily16Time, "1d", function()
-      if mode == "INACTIVE" or mode == "GERMAN_PENDING" then
-        obj:startDaily16Session()
-      else
-        hs.notify.new({
-          title = "📚 16:00 Study Reminder",
-          informativeText = string.format("It is 16:00! Currently in %s mode. Finish or stop to start the 16:00 session.", mode),
-          soundName = "Glass",
-        }):send()
-      end
-    end)
-  end
+  scheduleCheckTimer = hs.timer.doEvery(20, function()
+    checkDaily16Schedule()
+    checkGermanPrompt()
+  end)
+
+  -- Run check immediately on init
+  checkDaily16Schedule()
 
   -- Recovery on config reload / restart
   local savedMode = hs.settings.get(obj.settingsKeyMode)
@@ -1077,7 +1135,13 @@ function obj:init()
     checkGermanPrompt()
   end
 
+  _G.StudyMode = obj
+  _G.studymode = obj
+
   return self
 end
+
+_G.StudyMode = obj
+_G.studymode = obj
 
 return obj
