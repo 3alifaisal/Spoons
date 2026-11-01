@@ -19,6 +19,12 @@ Starts automatically every day at **16:00 (4:00 PM)**:
 - ☕ **Break (15 mins)**: YouTube & Chess **UNBLOCKED**. HUD: `[ ☕ 1/2  14:59 ]`. Rings Crystals when finished.
 - 📚 **Part 2 (45 mins)**: YouTube & Chess **BLOCKED**. HUD: `[ 📚 2/2  44:59 ]`.
 - 🏁 **Automatic Finish**: When the second 45-minute session is done, it **stops automatically** (no second break needed). Sites are unblocked.
+- ⏭️ **How to Skip / Stop for Today**:
+  Run in the console to skip today's session (or stop it if currently active):
+  ```lua
+  StudyMode:skip()
+  -- or StudyMode:stop()
+  ```
 
 ---
 
@@ -32,7 +38,11 @@ Starting every day, the top-right corner panel sits showing: `[ 🇩🇪 GERMAN 
   StudyMode.German:stop()
   ```
   *(or `spoon.StudyMode.German:stop()` / `StudyMode:germanStop()`)*
-- ✅ **Once-a-day completion**: Stopping marks German study completed for the day and hides the panel until the next day.
+- ⏭️ **How to Skip for Today**:
+  ```lua
+  StudyMode.German:skip()
+  ```
+- ✅ **Once-a-day completion**: Stopping or skipping marks German study completed for the day and hides the panel until the next day.
 
 ---
 

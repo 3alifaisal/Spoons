@@ -981,6 +981,19 @@ function obj.German:enableToday()
   hs.alert.show("🇩🇪 German panel enabled for today!", 3)
 end
 
+function obj.German:skip()
+  local today = os.date("%Y-%m-%d")
+  hs.settings.set(obj.settingsKeyGermanDoneDate, today)
+  if mode == "GERMAN_STUDY" or mode == "GERMAN_PENDING" then
+    stopGerman()
+    hs.alert.show("🇩🇪 German session skipped for today!", 3)
+  else
+    checkGermanPrompt()
+    hs.alert.show("🇩🇪 German session skipped for today!", 3)
+  end
+  return true
+end
+
 function obj:startGerman()
   startGermanStudy()
 end
@@ -992,6 +1005,25 @@ end
 obj.germanStop = function(self) return stopGerman() end
 obj.germanStart = function(self) return startGermanStudy() end
 obj.GermanStop = function(self) return stopGerman() end
+obj.skipGerman = function(...) return obj.German:skip(...) end
+
+--- StudyMode:skipDaily16()
+--- Skips today's 16:00 session. If already running, stops it immediately.
+function obj.skipDaily16(...)
+  local today = os.date("%Y-%m-%d")
+  hs.settings.set(obj.settingsKeyDaily16LastRunDate, today)
+
+  if isDaily16Session or mode == "STUDY" or mode == "BREAK" then
+    obj.stop(true)
+    hs.alert.show("📚 16:00 Study session skipped for today!\nSites unblocked.", 4)
+  else
+    hs.alert.show("📚 16:00 Study session skipped for today!\nWill not start at 16:00.", 4)
+  end
+  return true
+end
+
+obj.skip16 = obj.skipDaily16
+obj.skip = obj.skipDaily16
 
 --- StudyMode:init()
 function obj:init()
