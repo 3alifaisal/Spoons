@@ -852,10 +852,10 @@ function obj.stop(...)
 
   if isHardcore and not force then
     hs.alert.show(
-      string.format("🔥 HARDCORE MODE IS ACTIVE (%d/%d)\nCannot be stopped until 5 sessions complete!", currentSession, obj.hardcoreTotalSessions),
+      string.format("🔥 HARDCORE MODE IS ACTIVE (%d/%d)\nTo emergency stop, run:\nStudyMode:forceStop()", currentSession, obj.hardcoreTotalSessions),
       5
     )
-    print("🔥 Hardcore Mode is active. Stop request denied.")
+    print("🔥 Hardcore Mode is active. Run StudyMode:forceStop() to override.")
     return false
   end
 
@@ -899,6 +899,14 @@ function obj.stop(...)
   hs.alert.show("Study Mode stopped")
   return true
 end
+
+--- StudyMode:forceStop()
+--- Emergency stop for Hardcore Mode and any active study sessions.
+function obj.forceStop(...)
+  return obj.stop(true)
+end
+
+obj.emergencyStop = obj.forceStop
 
 --- StudyMode:toggle()
 function obj:toggle()

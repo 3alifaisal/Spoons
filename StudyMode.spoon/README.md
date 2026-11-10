@@ -60,7 +60,11 @@ Triggered by **holding `fn + S` continuously for 3 seconds** (overrides standard
 
 - ⏱️ **40-Minute Study / 10-Minute Break**: 40 mins study (sites blocked), 10 mins break (sites unblocked).
 - ⚡ **Override Capability**: If normal Study Mode is running, holding `fn + S` for 3 seconds immediately upgrades/replaces it with Hardcore Mode.
-- 🔒 **Non-Removable**: Cannot be stopped manually via Console (`spoon.StudyMode:stop()`) or hotkeys.
+- 🔒 **Non-Removable by Default**: Cannot be stopped via normal `StudyMode:stop()` or hotkeys.
+- 🚨 **Emergency Stop**: If you ever truly need to abort Hardcore Mode:
+  ```lua
+  StudyMode:forceStop()
+  ```
 - 🔁 **5 Consecutive Sessions**: Automatically ends only after completing 5 full study sessions on its own.
 - 🎨 **HUD Badging**: Displays glowing red theme with session progress `[ 🔥 1/5  39:59 ]`.
 
